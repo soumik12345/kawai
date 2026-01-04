@@ -32,6 +32,10 @@ def _python_type_to_tool_type(python_type: type) -> ToolArgumentType:
         return ToolArgumentType.FLOAT
     elif python_type == bool:
         return ToolArgumentType.BOOLEAN
+    elif python_type == dict:
+        return ToolArgumentType.OBJECT
+    elif python_type == list:
+        return ToolArgumentType.ARRAY
     elif hasattr(python_type, "__origin__"):
         # Handle generic types like List, Dict, etc.
         origin = getattr(python_type, "__origin__", None)
@@ -83,7 +87,10 @@ def _extract_docstring_info(func: Callable) -> tuple[str, dict[str, str]]:
             in_args_section = False
             if current_param and current_param_desc:
                 param_descriptions[current_param] = " ".join(current_param_desc).strip()
-            continue
+            current_param = None
+            current_param_desc = []
+            # Stop processing when we hit Returns section
+            break
 
         if in_args_section:
             # Check if this is a parameter line (starts with parameter name)
@@ -105,6 +112,9 @@ def _extract_docstring_info(func: Callable) -> tuple[str, dict[str, str]]:
                 # Continuation of parameter description
                 current_param_desc.append(stripped)
         elif not in_args_section and stripped:
+            # Stop processing when we hit Returns section outside of args
+            if stripped.lower().startswith(("returns:", "return:")):
+                break
             # Part of main description
             description_lines.append(stripped)
 

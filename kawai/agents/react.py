@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 from kawai.tools.tool import FinalAnswerTool, KawaiTool
 
 
-class ReactAgent(BaseModel):
+class KawaiReactAgent(BaseModel):
     model: str
     tools: list[KawaiTool]
     system_prompt: str

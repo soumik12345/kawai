@@ -39,19 +39,3 @@ class KawaiTool(BaseModel):
 
     def forward(self, **kwargs) -> dict[str, Any]:
         raise NotImplementedError("This method should be implemented by the subclass")
-
-
-class FinalAnswerTool(KawaiTool):
-    tool_name: str = "final_answer"
-    description: str = "Provides a final answer to the given problem."
-    parameters: list[KawaiToolParameter] = [
-        KawaiToolParameter(
-            param_name="answer",
-            tool_type="string",
-            description="The final answer to the problem",
-        )
-    ]
-
-    def forward(self, **kwargs) -> dict[str, Any]:
-        answer = kwargs.get("answer", "")
-        return {"answer": answer}

@@ -2080,6 +2080,9 @@ name = "kawai"
 source = { editable = "." }
 dependencies = [
     { name = "litellm" },
+    { name = "pydantic" },
+    { name = "python-dotenv" },
+    { name = "rich" },
     { name = "weave" },
 ]
 
@@ -2116,6 +2119,9 @@ docs = [
 [package.metadata]
 requires-dist = [
     { name = "litellm", specifier = ">=1.80.11" },
+    { name = "pydantic", specifier = ">=2.12.5" },
+    { name = "python-dotenv", specifier = ">=1.2.1" },
+    { name = "rich", specifier = ">=14.2.0" },
     { name = "weave", specifier = ">=0.52.22" },
 ]
 

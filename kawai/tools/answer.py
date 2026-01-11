@@ -1,5 +1,7 @@
 from typing import Any
 
+import weave
+
 from kawai.tools.tool import KawaiTool, KawaiToolParameter
 
 
@@ -9,22 +11,19 @@ class FinalAnswerTool(KawaiTool):
     parameters: list[KawaiToolParameter] = [
         KawaiToolParameter(
             param_name="answer",
-            tool_type="string",
+            tool_type="any",
             description="The final answer to the problem",
         )
     ]
 
-    def forward(self, **kwargs) -> dict[str, Any]:
-        answer = kwargs.get("answer", "")
-        return {"answer": answer}
+    @weave.op
+    def forward(self, answer: Any) -> Any:
+        return answer
 
 
 class UserInputTool(KawaiTool):
     tool_name: str = "user_input"
     description: str = "Asks for user's input on a specific question"
-    inputs = {
-        "question": {"type": "string", "description": "The question to ask the user"}
-    }
     parameters: list[KawaiToolParameter] = [
         KawaiToolParameter(
             param_name="question",
@@ -33,6 +32,7 @@ class UserInputTool(KawaiTool):
         )
     ]
 
+    @weave.op
     def forward(self, question):
         user_input = input(f"{question} => Type your answer here:")
         return user_input

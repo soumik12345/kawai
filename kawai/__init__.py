@@ -1,5 +1,11 @@
 from kawai.agents.react import KawaiReactAgent
-from kawai.tools import FinalAnswerTool, KawaiTool, KawaiToolParameter, UserInputTool
+from kawai.tools import (
+    FinalAnswerTool,
+    KawaiTool,
+    KawaiToolParameter,
+    UserInputTool,
+    WebSearchTool,
+)
 
 __all__ = [
     "KawaiReactAgent",
@@ -8,4 +14,5 @@ __all__ = [
     "FinalAnswerTool",
     "ReactAgent",
     "UserInputTool",
+    "WebSearchTool",
 ]

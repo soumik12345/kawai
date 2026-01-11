@@ -2,17 +2,30 @@ import json
 import os
 from typing import Any
 
+import weave
 from openai import OpenAI
 from pydantic import BaseModel, Field
+from rich.console import Console
+from rich.progress import track
 
-from kawai.tools.tool import FinalAnswerTool, KawaiTool
+from kawai.prompts import (
+    INITIAL_PLAN_PROMPT,
+    SYSTEM_PROMPT,
+    UPDATE_PLAN_POST_MESSAGES,
+    UPDATE_PLAN_PRE_MESSAGES,
+)
+from kawai.tools.answer import FinalAnswerTool
+from kawai.tools.tool import KawaiTool
+
+console = Console()
 
 
 class KawaiReactAgent(BaseModel):
     model: str
     tools: list[KawaiTool]
-    system_prompt: str
+    system_prompt: str = SYSTEM_PROMPT
     max_steps: int = 5
+    planning_interval: int | None = None
     tool_dict: dict[str, KawaiTool] = Field(default_factory=dict)
     _client: OpenAI | None = None
 
@@ -26,6 +39,156 @@ class KawaiReactAgent(BaseModel):
             base_url="https://openrouter.ai/api/v1",
             api_key=os.getenv("OPENROUTER_API_KEY"),
         )
+
+    def _get_tools_description(self) -> str:
+        """Generate a description of available tools for planning prompts."""
+        descriptions = []
+        for tool in self.tools:
+            if tool.tool_name != "final_answer":
+                params = ", ".join(
+                    [f"{p.param_name}: {p.tool_type}" for p in tool.parameters]
+                )
+                descriptions.append(f"- {tool.tool_name}({params}): {tool.description}")
+        return "\n".join(descriptions)
+
+    def _get_memory_summary(self, memory: list[dict[str, Any]]) -> str:
+        """Generate a summary of the agent's memory for planning updates."""
+        summary_parts = []
+        for item in memory:
+            if isinstance(item, dict):
+                if item.get("role") == "user":
+                    continue  # Skip the original task
+                elif item.get("role") == "assistant":
+                    content = item.get("content", "")
+                    if content:
+                        summary_parts.append(f"Assistant: {content}")
+                elif item.get("type") == "function_call":
+                    summary_parts.append(
+                        f"Tool call: {item.get('name')}({item.get('arguments', '{}')})"
+                    )
+                elif item.get("type") == "function_call_output":
+                    output = item.get("output", "")
+                    # Truncate long outputs
+                    if len(output) > 500:
+                        output = output[:500] + "..."
+                    summary_parts.append(f"Tool output: {output}")
+                elif item.get("type") == "planning":
+                    summary_parts.append(f"Previous plan:\n{item.get('plan', '')}")
+        return "\n".join(summary_parts)
+
+    def _generate_initial_plan(
+        self, task: str, memory: list[dict[str, Any]]
+    ) -> tuple[str, list[dict[str, Any]]]:
+        """Generate an initial plan for the task."""
+        tools_description = self._get_tools_description()
+        planning_prompt = INITIAL_PLAN_PROMPT.format(
+            tools_description=tools_description, task=task
+        )
+
+        planning_messages = [
+            {"role": "system", "content": "You are a planning assistant."},
+            {"role": "user", "content": planning_prompt},
+        ]
+
+        response = self._client.chat.completions.create(
+            model=self.model,
+            messages=planning_messages,
+        )
+
+        plan = response.choices[0].message.content or ""
+
+        # Add the plan to memory as a special planning step
+        memory.append(
+            {
+                "type": "planning",
+                "plan": plan,
+                "is_initial": True,
+            }
+        )
+
+        # Add the plan to the conversation for the agent to follow
+        memory.append(
+            {
+                "role": "assistant",
+                "content": f"I have created the following plan:\n\n{plan}",
+            }
+        )
+        memory.append(
+            {
+                "role": "user",
+                "content": "Now proceed and carry out this plan.",
+            }
+        )
+
+        console.print("\n[bold blue]📋 Initial Plan Created:[/bold blue]")
+        console.print(plan)
+        console.print()
+
+        return plan, memory
+
+    def _generate_updated_plan(
+        self, task: str, memory: list[dict[str, Any]], remaining_steps: int
+    ) -> tuple[str, list[dict[str, Any]]]:
+        """Generate an updated plan based on progress so far."""
+        tools_description = self._get_tools_description()
+        memory_summary = self._get_memory_summary(memory)
+
+        pre_messages = UPDATE_PLAN_PRE_MESSAGES.format(task=task)
+        post_messages = UPDATE_PLAN_POST_MESSAGES.format(
+            remaining_steps=remaining_steps, tools_description=tools_description
+        )
+
+        planning_prompt = f"{pre_messages}\n\n{memory_summary}\n\n{post_messages}"
+
+        planning_messages = [
+            {"role": "system", "content": "You are a planning assistant."},
+            {"role": "user", "content": planning_prompt},
+        ]
+
+        response = self._client.chat.completions.create(
+            model=self.model,
+            messages=planning_messages,
+        )
+
+        plan = response.choices[0].message.content or ""
+
+        # Add the updated plan to memory
+        memory.append(
+            {
+                "type": "planning",
+                "plan": plan,
+                "is_initial": False,
+            }
+        )
+
+        # Add the plan to the conversation for the agent to follow
+        memory.append(
+            {
+                "role": "assistant",
+                "content": f"I have updated my plan based on progress so far:\n\n{plan}",
+            }
+        )
+        memory.append(
+            {
+                "role": "user",
+                "content": "Now proceed and carry out this updated plan.",
+            }
+        )
+
+        console.print("\n[bold cyan]🔄 Updated Plan:[/bold cyan]")
+        console.print(plan)
+        console.print()
+
+        return plan, memory
+
+    def _should_plan(self, step_idx: int) -> bool:
+        """Determine if planning should occur at the current step."""
+        if self.planning_interval is None:
+            return False
+        # Plan at step 0 (initial) and every planning_interval steps after
+        if step_idx == 0:
+            return True
+        return step_idx % self.planning_interval == 0
 
     def execute_tool_from_response_call(
         self, memory: list[dict[str, Any]]
@@ -102,16 +265,30 @@ class KawaiReactAgent(BaseModel):
                     )
         return memory, is_finished, final_answer_call_id
 
+    @weave.op
     def run(self, prompt: str) -> dict[str, Any]:
-        memory = [
+        memory: list[dict[str, Any]] = [
             {"role": "system", "content": self.system_prompt},
             {"role": "user", "content": prompt},
         ]
         final_answer = None
         is_finished = False
         step_idx = -1
+        current_plan: str | None = None
 
-        for step_idx in range(self.max_steps):
+        for step_idx in track(range(self.max_steps), description="Running Agent"):
+            # Check if we should generate/update the plan
+            if self._should_plan(step_idx):
+                remaining_steps = self.max_steps - step_idx
+                if step_idx == 0:
+                    # Generate initial plan
+                    current_plan, memory = self._generate_initial_plan(prompt, memory)
+                else:
+                    # Update plan based on progress
+                    current_plan, memory = self._generate_updated_plan(
+                        prompt, memory, remaining_steps
+                    )
+
             memory, is_finished, final_answer_call_id = (
                 self.execute_tool_from_response_call(memory)
             )
@@ -124,10 +301,14 @@ class KawaiReactAgent(BaseModel):
                         and item.get("type") == "function_call_output"
                         and item.get("call_id") == final_answer_call_id
                     ):
+                        # FinalAnswerTool returns the answer directly (passthrough)
+                        output = item.get("output")
                         try:
-                            final_answer = json.loads(item["output"])
-                        except (json.JSONDecodeError, KeyError):
-                            final_answer = item.get("output")
+                            # Try to parse as JSON in case it was serialized
+                            final_answer = json.loads(output)
+                        except (json.JSONDecodeError, TypeError):
+                            # If not JSON, use the raw value
+                            final_answer = output
                         break
                 break
 
@@ -136,4 +317,5 @@ class KawaiReactAgent(BaseModel):
             "steps": step_idx + 1,
             "memory": memory,
             "completed": is_finished,
+            "plan": current_plan,
         }

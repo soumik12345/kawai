@@ -5,16 +5,15 @@ from typing import Any
 import weave
 from openai import OpenAI
 from pydantic import BaseModel, Field
-from rich.progress import track
 
+from kawai.callback import KawaiCallback
 from kawai.prompts import (
     INITIAL_PLAN_PROMPT,
     SYSTEM_PROMPT,
     UPDATE_PLAN_POST_MESSAGES,
     UPDATE_PLAN_PRE_MESSAGES,
 )
-from kawai.tools.answer import FinalAnswerTool
-from kawai.tools.tool import KawaiTool
+from kawai.tools import FinalAnswerTool, KawaiTool
 
 
 class KawaiReactAgent(BaseModel):
@@ -24,6 +23,7 @@ class KawaiReactAgent(BaseModel):
     max_steps: int = 5
     planning_interval: int | None = None
     tool_dict: dict[str, KawaiTool] = Field(default_factory=dict)
+    callbacks: list[KawaiCallback] = []
     _client: OpenAI | None = None
 
     def model_post_init(self, __context: Any) -> None:
@@ -92,6 +92,9 @@ class KawaiReactAgent(BaseModel):
 
         plan = response.choices[0].message.content or ""
 
+        for callback in self.callbacks:
+            callback.at_planning_end(plan=plan, updated_plan=False)
+
         # Add the plan to the conversation for the agent to follow
         memory.append(
             {
@@ -133,6 +136,9 @@ class KawaiReactAgent(BaseModel):
         )
 
         plan = response.choices[0].message.content or ""
+
+        for callback in self.callbacks:
+            callback.at_planning_end(plan=plan, updated_plan=True)
 
         # Add the plan to the conversation for the agent to follow
         # We use standard role-based messages that the API understands
@@ -237,20 +243,26 @@ class KawaiReactAgent(BaseModel):
 
     @weave.op
     def run(self, prompt: str) -> dict[str, Any]:
+        for callback in self.callbacks:
+            callback.at_run_start(prompt=prompt, model=self.model)
+
         memory: list[dict[str, Any]] = [
             {"role": "system", "content": self.system_prompt},
             {"role": "user", "content": prompt},
         ]
         final_answer = None
         is_finished = False
-        step_idx = -1
+        step_index = -1
         current_plan: str | None = None
 
-        for step_idx in track(range(self.max_steps), description="Running Agent"):
+        for step_index in range(self.max_steps):
+            for callback in self.callbacks:
+                callback.at_step_start(step_index=step_index)
+
             # Check if we should generate/update the plan
-            if self._should_plan(step_idx):
-                remaining_steps = self.max_steps - step_idx
-                if step_idx == 0:
+            if self._should_plan(step_index):
+                remaining_steps = self.max_steps - step_index
+                if step_index == 0:
                     # Generate initial plan
                     current_plan, memory = self._generate_initial_plan(prompt, memory)
                 else:
@@ -282,9 +294,12 @@ class KawaiReactAgent(BaseModel):
                         break
                 break
 
+        for callback in self.callbacks:
+            callback.at_run_end(answer=final_answer)
+
         return {
             "final_answer": final_answer,
-            "steps": step_idx + 1,
+            "steps": step_index + 1,
             "memory": memory,
             "completed": is_finished,
             "plan": current_plan,

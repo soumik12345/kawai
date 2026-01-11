@@ -1,4 +1,5 @@
 from kawai.agents.react import KawaiReactAgent
+from kawai.callback import KawaiCallback, KawaiLoggingCallback
 from kawai.tools import (
     FinalAnswerTool,
     KawaiTool,
@@ -15,4 +16,6 @@ __all__ = [
     "ReactAgent",
     "UserInputTool",
     "WebSearchTool",
+    "KawaiCallback",
+    "KawaiLoggingCallback",
 ]

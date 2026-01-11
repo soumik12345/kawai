@@ -72,8 +72,6 @@ class KawaiReactAgent(BaseModel):
                     if len(output) > 500:
                         output = output[:500] + "..."
                     summary_parts.append(f"Tool output: {output}")
-                elif item.get("type") == "planning":
-                    summary_parts.append(f"Previous plan:\n{item.get('plan', '')}")
         return "\n".join(summary_parts)
 
     def _generate_initial_plan(
@@ -97,16 +95,8 @@ class KawaiReactAgent(BaseModel):
 
         plan = response.choices[0].message.content or ""
 
-        # Add the plan to memory as a special planning step
-        memory.append(
-            {
-                "type": "planning",
-                "plan": plan,
-                "is_initial": True,
-            }
-        )
-
         # Add the plan to the conversation for the agent to follow
+        # We use standard role-based messages that the API understands
         memory.append(
             {
                 "role": "assistant",
@@ -152,16 +142,8 @@ class KawaiReactAgent(BaseModel):
 
         plan = response.choices[0].message.content or ""
 
-        # Add the updated plan to memory
-        memory.append(
-            {
-                "type": "planning",
-                "plan": plan,
-                "is_initial": False,
-            }
-        )
-
         # Add the plan to the conversation for the agent to follow
+        # We use standard role-based messages that the API understands
         memory.append(
             {
                 "role": "assistant",

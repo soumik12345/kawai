@@ -11,6 +11,7 @@ weave.init(project_name="kawai")
 agent = KawaiReactAgent(
     model="openai/gpt-5",
     tools=[WebSearchTool()],
+    planning_interval=3,
 )
 result = agent.run(
     prompt="Who is the finance minister of West Bengal as of January 2026?"

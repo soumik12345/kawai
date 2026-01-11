@@ -182,6 +182,11 @@ class KawaiReactAgent(BaseModel):
         final_answer_call_id = None
         message = response.choices[0].message
 
+        # Log reasoning if present (assistant's thinking before tool calls)
+        if message.content:
+            for callback in self.callbacks:
+                callback.at_reasoning(reasoning=message.content)
+
         # Add assistant message to memory with tool_calls if present
         # This uses the correct OpenAI Chat Completions API format
         assistant_message: dict[str, Any] = {"role": "assistant"}
@@ -208,28 +213,39 @@ class KawaiReactAgent(BaseModel):
         # Process tool calls if present
         if message.tool_calls:
             for tool_call in message.tool_calls:
+                tool_name = tool_call.function.name
+                tool_arguments = json.loads(tool_call.function.arguments)
+
+                # Log tool call arguments
+                for callback in self.callbacks:
+                    callback.at_tool_call(
+                        tool_name=tool_name, tool_arguments=tool_arguments
+                    )
+
                 # Execute the tool
-                tool_to_execute = self.tool_dict.get(tool_call.function.name)
+                tool_to_execute = self.tool_dict.get(tool_name)
                 if not tool_to_execute:
                     # Add tool response with role: "tool" (correct format)
+                    error_content = json.dumps({"error": f"Unknown tool: {tool_name}"})
                     memory.append(
                         {
                             "role": "tool",
                             "tool_call_id": tool_call.id,
-                            "content": json.dumps(
-                                {"error": f"Unknown tool: {tool_call.function.name}"}
-                            ),
+                            "content": error_content,
                         }
                     )
+                    # Log error result
+                    for callback in self.callbacks:
+                        callback.at_tool_result(
+                            tool_name=tool_name, tool_result=error_content
+                        )
                     continue
 
                 try:
-                    tool_execution_result = tool_to_execute.forward(
-                        **json.loads(tool_call.function.arguments)
-                    )
+                    tool_execution_result = tool_to_execute.forward(**tool_arguments)
 
                     # Check if this is the final answer and track its call_id
-                    if tool_call.function.name == "final_answer":
+                    if tool_name == "final_answer":
                         is_finished = True
                         final_answer_call_id = tool_call.id
 
@@ -246,14 +262,26 @@ class KawaiReactAgent(BaseModel):
                             "content": output_content,
                         }
                     )
+
+                    # Log tool result
+                    for callback in self.callbacks:
+                        callback.at_tool_result(
+                            tool_name=tool_name, tool_result=output_content
+                        )
                 except Exception as e:
+                    error_content = json.dumps({"error": str(e)})
                     memory.append(
                         {
                             "role": "tool",
                             "tool_call_id": tool_call.id,
-                            "content": json.dumps({"error": str(e)}),
+                            "content": error_content,
                         }
                     )
+                    # Log error result
+                    for callback in self.callbacks:
+                        callback.at_tool_result(
+                            tool_name=tool_name, tool_result=error_content
+                        )
 
         return memory, is_finished, final_answer_call_id
 

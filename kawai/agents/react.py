@@ -59,12 +59,15 @@ class KawaiReactAgent(BaseModel):
                     content = item.get("content", "")
                     if content:
                         summary_parts.append(f"Assistant: {content}")
-                elif item.get("type") == "function_call":
-                    summary_parts.append(
-                        f"Tool call: {item.get('name')}({item.get('arguments', '{}')})"
-                    )
-                elif item.get("type") == "function_call_output":
-                    output = item.get("output", "")
+                    # Handle tool calls embedded in assistant message
+                    tool_calls = item.get("tool_calls", [])
+                    for tc in tool_calls:
+                        func = tc.get("function", {})
+                        summary_parts.append(
+                            f"Tool call: {func.get('name')}({func.get('arguments', '{}')})"
+                        )
+                elif item.get("role") == "tool":
+                    output = item.get("content", "")
                     # Truncate long outputs
                     if len(output) > 500:
                         output = output[:500] + "..."
@@ -169,76 +172,89 @@ class KawaiReactAgent(BaseModel):
     def execute_tool_from_response_call(
         self, memory: list[dict[str, Any]]
     ) -> tuple[list[dict[str, Any]], bool, str | None]:
-        response = self._client.responses.create(
+        response = self._client.chat.completions.create(
             model=self.model,
             tools=[tool.to_json_schema() for tool in self.tools],
-            input=memory,
+            messages=memory,
         )
 
         is_finished = False
         final_answer_call_id = None
+        message = response.choices[0].message
 
-        # First, add all items from response.output to memory
-        for item in response.output:
-            if item.type == "function_call":
-                # Add the function call itself to memory
-                memory.append(
-                    {
-                        "type": "function_call",
-                        "call_id": item.call_id,
-                        "name": item.name,
-                        "arguments": item.arguments,
-                    }
-                )
-            elif item.type == "message":
-                # Add message items to memory
-                memory.append(
-                    item.model_dump() if hasattr(item, "model_dump") else item
-                )
-            # Skip reasoning items - they should not be added back to input
+        # Add assistant message to memory with tool_calls if present
+        # This uses the correct OpenAI Chat Completions API format
+        assistant_message: dict[str, Any] = {"role": "assistant"}
+        if message.content:
+            assistant_message["content"] = message.content
+        else:
+            assistant_message["content"] = None
 
-        # Then, execute function calls and add their outputs
-        for item in response.output:
-            if item.type == "function_call":
-                tool_to_execute = self.tool_dict.get(item.name)
+        if message.tool_calls:
+            assistant_message["tool_calls"] = [
+                {
+                    "id": tool_call.id,
+                    "type": "function",
+                    "function": {
+                        "name": tool_call.function.name,
+                        "arguments": tool_call.function.arguments,
+                    },
+                }
+                for tool_call in message.tool_calls
+            ]
+
+        memory.append(assistant_message)
+
+        # Process tool calls if present
+        if message.tool_calls:
+            for tool_call in message.tool_calls:
+                # Execute the tool
+                tool_to_execute = self.tool_dict.get(tool_call.function.name)
                 if not tool_to_execute:
+                    # Add tool response with role: "tool" (correct format)
                     memory.append(
                         {
-                            "type": "function_call_output",
-                            "call_id": item.call_id,
-                            "output": json.dumps(
-                                {"error": f"Unknown tool: {item.name}"}
+                            "role": "tool",
+                            "tool_call_id": tool_call.id,
+                            "content": json.dumps(
+                                {"error": f"Unknown tool: {tool_call.function.name}"}
                             ),
                         }
                     )
                     continue
+
                 try:
                     tool_execution_result = tool_to_execute.forward(
-                        **json.loads(item.arguments)
+                        **json.loads(tool_call.function.arguments)
                     )
 
                     # Check if this is the final answer and track its call_id
-                    if item.name == "final_answer":
+                    if tool_call.function.name == "final_answer":
                         is_finished = True
-                        final_answer_call_id = item.call_id
+                        final_answer_call_id = tool_call.id
 
+                    # Add tool response with role: "tool" (correct format)
+                    output_content = (
+                        json.dumps(tool_execution_result)
+                        if not isinstance(tool_execution_result, str)
+                        else tool_execution_result
+                    )
                     memory.append(
                         {
-                            "type": "function_call_output",
-                            "call_id": item.call_id,
-                            "output": json.dumps(tool_execution_result)
-                            if not isinstance(tool_execution_result, str)
-                            else tool_execution_result,
+                            "role": "tool",
+                            "tool_call_id": tool_call.id,
+                            "content": output_content,
                         }
                     )
                 except Exception as e:
                     memory.append(
                         {
-                            "type": "function_call_output",
-                            "call_id": item.call_id,
-                            "output": json.dumps({"error": str(e)}),
+                            "role": "tool",
+                            "tool_call_id": tool_call.id,
+                            "content": json.dumps({"error": str(e)}),
                         }
                     )
+
         return memory, is_finished, final_answer_call_id
 
     @weave.op
@@ -276,15 +292,15 @@ class KawaiReactAgent(BaseModel):
             )
 
             if is_finished and final_answer_call_id:
-                # Find the specific function_call_output with the matching call_id
+                # Find the specific tool response with the matching tool_call_id
                 for item in memory:
                     if (
                         isinstance(item, dict)
-                        and item.get("type") == "function_call_output"
-                        and item.get("call_id") == final_answer_call_id
+                        and item.get("role") == "tool"
+                        and item.get("tool_call_id") == final_answer_call_id
                     ):
                         # FinalAnswerTool returns the answer directly (passthrough)
-                        output = item.get("output")
+                        output = item.get("content")
                         try:
                             # Try to parse as JSON in case it was serialized
                             final_answer = json.loads(output)

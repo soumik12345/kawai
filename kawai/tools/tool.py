@@ -35,19 +35,22 @@ class KawaiTool(BaseModel):
     def to_json_schema(self) -> dict:
         return {
             "type": "function",
-            "name": self.tool_name,
-            "description": self.description,
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    parameter.param_name: self._get_parameter_schema(parameter)
-                    for parameter in self.parameters
+            "function": {
+                "name": self.tool_name,
+                "description": self.description,
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        parameter.param_name: self._get_parameter_schema(parameter)
+                        for parameter in self.parameters
+                    },
+                    "required": [
+                        parameter.param_name
+                        for parameter in self.parameters
+                        if parameter.required
+                    ],
+                    "additionalProperties": False,
                 },
-                "required": [
-                    parameter.param_name
-                    for parameter in self.parameters
-                    if parameter.required
-                ],
             },
         }
 

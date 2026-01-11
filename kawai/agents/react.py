@@ -5,7 +5,6 @@ from typing import Any
 import weave
 from openai import OpenAI
 from pydantic import BaseModel, Field
-from rich.console import Console
 from rich.progress import track
 
 from kawai.prompts import (
@@ -16,8 +15,6 @@ from kawai.prompts import (
 )
 from kawai.tools.answer import FinalAnswerTool
 from kawai.tools.tool import KawaiTool
-
-console = Console()
 
 
 class KawaiReactAgent(BaseModel):
@@ -96,7 +93,6 @@ class KawaiReactAgent(BaseModel):
         plan = response.choices[0].message.content or ""
 
         # Add the plan to the conversation for the agent to follow
-        # We use standard role-based messages that the API understands
         memory.append(
             {
                 "role": "assistant",
@@ -109,10 +105,6 @@ class KawaiReactAgent(BaseModel):
                 "content": "Now proceed and carry out this plan.",
             }
         )
-
-        console.print("\n[bold blue]📋 Initial Plan Created:[/bold blue]")
-        console.print(plan)
-        console.print()
 
         return plan, memory
 
@@ -156,10 +148,6 @@ class KawaiReactAgent(BaseModel):
                 "content": "Now proceed and carry out this updated plan.",
             }
         )
-
-        console.print("\n[bold cyan]🔄 Updated Plan:[/bold cyan]")
-        console.print(plan)
-        console.print()
 
         return plan, memory
 

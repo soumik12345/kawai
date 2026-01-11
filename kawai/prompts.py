@@ -1,3 +1,5 @@
+"""The prompts are taken from https://github.com/huggingface/smolagents/blob/main/src/smolagents/prompts/toolcalling_agent.yaml"""
+
 SYSTEM_PROMPT = """
 You are an expert assistant who can solve any task using tool calls. You will be given a task to solve as best you can.
 To do so, you have been given access to some tools.

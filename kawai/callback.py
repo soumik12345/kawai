@@ -1,3 +1,4 @@
+import json
 from typing import Any
 
 from pydantic import BaseModel
@@ -38,12 +39,14 @@ class KawaiCallback(BaseModel):
 
 
 class KawaiLoggingCallback(KawaiCallback):
+    truncate: bool = False
     _console: Console | None = None
     max_result_length: int = 1000
 
-    def __init__(self, max_result_length: int = 1000) -> None:
+    def __init__(self, truncate: bool = False, max_result_length: int = 1000) -> None:
         super().__init__()
         self._console = Console()
+        self.truncate = truncate
         self.max_result_length = max_result_length
 
     def at_run_start(self, prompt: str, model: str):
@@ -108,16 +111,32 @@ class KawaiLoggingCallback(KawaiCallback):
         )
 
     def at_tool_result(self, tool_name: str, tool_result: str):
-        # Truncate long results for display
-        display_result = tool_result
-        if len(display_result) > self.max_result_length:
-            display_result = (
-                display_result[: self.max_result_length] + "\n... [truncated]"
-            )
+        # Try to parse as JSON to determine rendering format
+        try:
+            parsed_result = json.loads(tool_result)
+            is_json = isinstance(parsed_result, (dict, list))
+        except (json.JSONDecodeError, TypeError):
+            is_json = False
+            parsed_result = tool_result
+
+        if is_json:
+            display_result = json.dumps(parsed_result, indent=2)
+            if self.truncate and len(display_result) > self.max_result_length:
+                display_result = (
+                    display_result[: self.max_result_length] + "\n... [truncated]"
+                )
+            content = Syntax(display_result, "json", theme="monokai", word_wrap=True)
+        else:
+            display_result = tool_result
+            if self.truncate and len(display_result) > self.max_result_length:
+                display_result = (
+                    display_result[: self.max_result_length] + "\n... [truncated]"
+                )
+            content = Markdown(display_result)
 
         self._console.print(
             Panel(
-                display_result,
+                content,
                 title=f"[bold magenta]Tool Result: {tool_name}[/bold magenta]",
                 title_align="left",
                 border_style="magenta",

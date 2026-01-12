@@ -2,7 +2,6 @@
 
 import os
 
-import weave
 from dotenv import load_dotenv
 
 from kawai import (
@@ -14,7 +13,7 @@ from kawai import (
 )
 
 load_dotenv()
-weave.init(project_name="kawai")
+# weave.init(project_name="kawai")
 
 # Configure Mem0Memory with persistent storage
 # Note: Requires installing memory extras: `uv pip install -e ".[memory]"`

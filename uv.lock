@@ -2381,6 +2381,7 @@ wheels = [
 name = "kawai"
 source = { editable = "." }
 dependencies = [
+    { name = "anyio" },
     { name = "fastapi" },
     { name = "litellm" },
     { name = "pydantic" },
@@ -2430,6 +2431,7 @@ docs = [
 
 [package.metadata]
 requires-dist = [
+    { name = "anyio", specifier = ">=4.0.0" },
     { name = "chromadb", marker = "extra == 'memory'", specifier = ">=1.4.0" },
     { name = "fastapi", specifier = ">=0.115.0" },
     { name = "litellm", specifier = ">=1.80.11" },

@@ -1,7 +1,6 @@
 import json
 from typing import Any
 
-import uvicorn
 import weave
 from pydantic import BaseModel, Field
 
@@ -13,7 +12,6 @@ from kawai.prompts import (
     UPDATE_PLAN_POST_MESSAGES,
     UPDATE_PLAN_PRE_MESSAGES,
 )
-from kawai.server import create_app
 from kawai.tools import FinalAnswerTool, KawaiTool
 
 
@@ -585,39 +583,47 @@ class KawaiReactAgent(BaseModel):
         self,
         host: str = "0.0.0.0",
         port: int = 8000,
-        reload: bool = False,
+        session_timeout: int = 3600,
+        enable_cors: bool = True,
+        allowed_origins: list[str] | None = None,
         log_level: str = "info",
     ) -> None:
-        """Start an OpenAI-compatible API server for this agent.
+        """Start a FastAPI server to serve the agent via REST API.
 
-        This method starts a FastAPI server that exposes the agent through an
-        OpenAI-compatible REST API. The server supports:
+        This method starts a web server that exposes the agent through HTTP endpoints,
+        allowing you to query the agent from other applications or integrate it into
+        existing infrastructure.
 
-        - **Streaming responses**: Real-time streaming via Server-Sent Events
-        - **Stateful conversations**: Multi-turn conversations with session management
-        - **Full OpenAI compatibility**: Works with existing OpenAI SDK clients
+        Available endpoints:
+            - `POST /chat`: Non-streaming chat endpoint. Send a message and get the final response.
+            - `GET /stream`: Server-Sent Events streaming endpoint for real-time updates.
+            - `GET /health`: Health check endpoint with server status and session count.
+            - `GET /sessions/{session_id}`: Get information about a specific session.
+            - `DELETE /sessions/{session_id}`: Delete a session.
 
-        Endpoints:
-            - `POST /v1/chat/completions`: Create chat completion (streaming or non-streaming)
-            - `GET /v1/models`: List available models
-            - `GET /v1/models/{model_name}`: Get model info
-            - `GET /health`: Health check
-            - `GET /v1/conversations`: List active sessions
-            - `DELETE /v1/conversations/{session_id}`: Delete a session
+        Sessions maintain conversation memory across requests, enabling multi-turn
+        conversations with the agent.
 
         Args:
-            host (str): Host address to bind the server to. Use "0.0.0.0" to accept
-                connections from any interface, or "127.0.0.1" for localhost only.
-                Defaults to "0.0.0.0".
-            port (int): Port number to run the server on. Defaults to 8000.
-            reload (bool): Enable auto-reload for development. When True, the server
-                restarts automatically when code changes are detected. Defaults to False.
-            log_level (str): Logging level for the server. One of "debug", "info",
-                "warning", "error", "critical". Defaults to "info".
+            host (str): Host address to bind the server to. Defaults to "0.0.0.0"
+                (all interfaces).
+            port (int): Port number to bind the server to. Defaults to 8000.
+            session_timeout (int): Session expiration time in seconds. Sessions that
+                haven't been accessed within this time are automatically cleaned up.
+                Defaults to 3600 (1 hour).
+            enable_cors (bool): Whether to enable CORS middleware for cross-origin
+                requests from browsers. Defaults to True.
+            allowed_origins (list[str] | None): List of allowed origins for CORS.
+                If None and CORS is enabled, allows all origins ("*").
+            log_level (str): Uvicorn log level. One of "critical", "error", "warning",
+                "info", "debug", "trace". Defaults to "info".
 
         !!! example "Basic Usage"
             ```python
-            from kawai import KawaiReactAgent, OpenAIModel, WebSearchTool
+            import weave
+            from kawai import KawaiReactAgent, WebSearchTool, OpenAIModel
+
+            weave.init(project_name="kawai-server")
 
             model = OpenAIModel(
                 model_id="google/gemini-3-flash-preview",
@@ -628,76 +634,76 @@ class KawaiReactAgent(BaseModel):
             agent = KawaiReactAgent(
                 model=model,
                 tools=[WebSearchTool()],
-                max_steps=10
+                max_steps=10,
             )
 
-            # Start server on port 8000
-            agent.serve(host="0.0.0.0", port=8000)
+            # Start the server (blocking)
+            agent.serve(port=8000)
             ```
 
-        !!! example "Client Usage with OpenAI SDK"
-            ```python
-            import openai
-
-            client = openai.OpenAI(
-                base_url="http://localhost:8000/v1",
-                api_key="not-needed"  # API key not validated
-            )
-
-            # Non-streaming request
-            response = client.chat.completions.create(
-                model="kawai-agent",
-                messages=[{"role": "user", "content": "What's the weather?"}]
-            )
-            print(response.choices[0].message.content)
-
-            # Streaming request
-            stream = client.chat.completions.create(
-                model="kawai-agent",
-                messages=[{"role": "user", "content": "Search for AI news"}],
-                stream=True
-            )
-            for chunk in stream:
-                if chunk.choices[0].delta.content:
-                    print(chunk.choices[0].delta.content, end="")
-            ```
-
-        !!! example "Stateful Conversations"
+        !!! example "Client Usage - Non-streaming"
             ```python
             import requests
 
-            # First message - creates new session
+            # Send a chat request
             response = requests.post(
-                "http://localhost:8000/v1/chat/completions",
+                "http://localhost:8000/chat",
                 json={
-                    "model": "kawai-agent",
-                    "messages": [{"role": "user", "content": "My name is Alice"}]
+                    "message": "What is the capital of France?",
+                    "session_id": "user-123"  # Optional: maintains conversation
                 }
             )
-            session_id = response.headers.get("X-Session-ID")
 
-            # Follow-up message - continues conversation
-            response = requests.post(
-                "http://localhost:8000/v1/chat/completions",
-                headers={"X-Session-ID": session_id},
-                json={
-                    "model": "kawai-agent",
-                    "messages": [{"role": "user", "content": "What's my name?"}]
-                }
+            result = response.json()
+            print(result["answer"])  # The agent's response
+            print(result["session_id"])  # Use this for follow-up messages
+            ```
+
+        !!! example "Client Usage - Streaming"
+            ```python
+            import requests
+            import json
+
+            # Connect to streaming endpoint
+            response = requests.get(
+                "http://localhost:8000/stream",
+                params={
+                    "message": "Search for latest AI news",
+                    "session_id": "user-123"
+                },
+                stream=True
             )
-            # Agent remembers the conversation context
+
+            # Process events as they arrive
+            for line in response.iter_lines():
+                if line:
+                    data = line.decode().removeprefix("data: ")
+                    event = json.loads(data)
+                    print(f"{event['type']}: {event['data']}")
             ```
 
         Note:
-            - The server blocks the current thread. Use in a separate process for
-              non-blocking operation.
-            - Each session maintains independent memory, allowing concurrent users.
-            - API documentation is available at `/docs` (Swagger UI) and `/redoc`.
-            - The `X-Session-ID` header is used for session management. If not provided,
-              a new session is created for each request.
-
-        Raises:
-            ImportError: If FastAPI or uvicorn are not installed.
+            - This method blocks until the server is shut down (Ctrl+C)
+            - The server uses uvicorn as the ASGI server
+            - Sessions are stored in memory and lost on server restart
+            - For production use, consider using a reverse proxy like nginx
         """
-        app = create_app(agent=self)
-        uvicorn.run(app, host=host, port=port, reload=reload, log_level=log_level)
+        import uvicorn
+
+        from kawai.server.app import create_app
+
+        # Create the FastAPI app with this agent as the template
+        app = create_app(
+            agent=self,
+            session_timeout=session_timeout,
+            enable_cors=enable_cors,
+            allowed_origins=allowed_origins,
+        )
+
+        # Start the server
+        uvicorn.run(
+            app,
+            host=host,
+            port=port,
+            log_level=log_level,
+        )

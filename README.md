@@ -11,6 +11,7 @@ The Cute agentic framework.
 - **Optional Planning**: Multi-step planning with configurable re-planning intervals
 - **Rich Logging**: Color-coded console output with syntax highlighting
 - **Weave Integration**: Automatic experiment tracking and observability
+- **REST API Deployment**: Deploy agents as REST APIs with streaming support
 
 ## Installation
 
@@ -43,10 +44,6 @@ agent = KawaiReactAgent(
 result = agent.run("What's the latest news on AI?")
 print(result["final_answer"])
 ```
-
-## Examples
-
-* [Memory-augmented web-search agent](./examples/web_search.py)
 
 ## Built-in Tools
 
@@ -117,6 +114,84 @@ agent = KawaiReactAgent(
     callbacks=[MyCallback()]
 )
 ```
+
+## Deploying as REST API
+
+Deploy your agent as a REST API server for integration with other applications:
+
+```python
+import weave
+from kawai import KawaiReactAgent, WebSearchTool, OpenAIModel
+
+weave.init(project_name="kawai-server")
+
+model = OpenAIModel(
+    model_id="google/gemini-3-flash-preview",
+    base_url="https://openrouter.ai/api/v1",
+    api_key_env_var="OPENROUTER_API_KEY",
+)
+
+agent = KawaiReactAgent(
+    model=model,
+    tools=[WebSearchTool()],
+    max_steps=10,
+)
+
+# Start REST API server
+agent.serve(port=8000)
+```
+
+The server provides these endpoints:
+
+- **POST /chat** - Non-streaming chat endpoint
+- **GET /stream** - Server-Sent Events for real-time streaming
+- **GET /health** - Health check with server status
+- **GET /sessions/{id}** - Get session information
+- **DELETE /sessions/{id}** - Delete a session
+
+### Client Usage
+
+**Python client (non-streaming):**
+```python
+import requests
+
+response = requests.post(
+    "http://localhost:8000/chat",
+    json={"message": "What is machine learning?"}
+)
+print(response.json()["answer"])
+```
+
+**Python client (streaming):**
+```python
+import requests
+import json
+
+response = requests.get(
+    "http://localhost:8000/stream",
+    params={"message": "Search for AI news"},
+    stream=True
+)
+
+for line in response.iter_lines():
+    if line:
+        event = json.loads(line.decode().removeprefix("data: "))
+        print(f"{event['type']}: {event['data']}")
+```
+
+**cURL:**
+```bash
+curl -X POST http://localhost:8000/chat \
+     -H "Content-Type: application/json" \
+     -d '{"message": "Hello!"}'
+```
+
+See the [deployment guide](docs/deployment.md) for production deployment options.
+
+## Examples
+
+* [Memory-augmented web-search agent](./examples/web_search.py)
+* [REST API server deployment](./examples/serve_example.py)
 
 ## 🙏 Acknowledgments
 

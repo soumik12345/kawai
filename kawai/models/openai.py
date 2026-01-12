@@ -34,6 +34,9 @@ class OpenAIModel(BaseModel):
             Defaults to None.
         api_key_env_var (str): Name of the environment variable containing the
             API key. Defaults to "OPENAI_API_KEY".
+        max_tokens (int | None): Maximum number of tokens to generate in the
+            completion. If None, uses the model's default limit. Setting this
+            can help ensure complete reasoning responses. Defaults to None.
         memory (list[dict[str, Any]]): Conversation history in OpenAI Chat
             Completions format. Each message is a dict with "role" and "content"
             keys, plus optional "tool_calls" or "tool_call_id" for function calling.
@@ -47,7 +50,8 @@ class OpenAIModel(BaseModel):
         model = OpenAIModel(
             model_id="google/gemini-3-flash-preview",
             base_url="https://openrouter.ai/api/v1",
-            api_key_env_var="OPENROUTER_API_KEY"
+            api_key_env_var="OPENROUTER_API_KEY",
+            max_tokens=4096  # Ensure complete responses
         )
 
         # Using OpenAI directly
@@ -75,6 +79,7 @@ class OpenAIModel(BaseModel):
     system_prompt: str | None = None
     base_url: str | None = None
     api_key_env_var: str = "OPENAI_API_KEY"
+    max_tokens: int | None = None
     memory: list[dict[str, Any]] = []
     _client: OpenAI | None = None
 
@@ -179,6 +184,8 @@ class OpenAIModel(BaseModel):
         completion_kwargs = {}
         if tools is not None:
             completion_kwargs["tools"] = tools
+        if self.max_tokens is not None:
+            completion_kwargs["max_tokens"] = self.max_tokens
         return self._client.chat.completions.create(
             model=self.model_id, messages=messages, **completion_kwargs
         )
@@ -229,6 +236,8 @@ class OpenAIModel(BaseModel):
         completion_kwargs = {}
         if tools is not None:
             completion_kwargs["tools"] = tools
+        if self.max_tokens is not None:
+            completion_kwargs["max_tokens"] = self.max_tokens
         return self._client.chat.completions.create(
             model=self.model_id, messages=self.memory, **completion_kwargs
         )

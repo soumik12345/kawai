@@ -80,4 +80,6 @@ plugins:
 nav:
   - Home: index.md
   - API Reference:
+    - Agents: api_reference/agents.md
+    - Callbacks: api_reference/callbacks.md
     - Tools: api_reference/tools.md

@@ -461,7 +461,7 @@ class KawaiReactAgent(BaseModel):
         return final_answer
 
     @weave.op
-    def run(self, prompt: str, force_provide_answer: bool) -> dict[str, Any]:
+    def run(self, prompt: str, force_provide_answer: bool = False) -> dict[str, Any]:
         """Execute the agent on a task and return the result.
 
         This is the main entry point for running the agent. It implements the full
@@ -578,3 +578,132 @@ class KawaiReactAgent(BaseModel):
             "completed": is_finished,
             "plan": current_plan,
         }
+
+    def serve(
+        self,
+        host: str = "0.0.0.0",
+        port: int = 8000,
+        session_timeout: int = 3600,
+        enable_cors: bool = True,
+        allowed_origins: list[str] | None = None,
+        log_level: str = "info",
+    ) -> None:
+        """Start a FastAPI server to serve the agent via REST API.
+
+        This method starts a web server that exposes the agent through HTTP endpoints,
+        allowing you to query the agent from other applications or integrate it into
+        existing infrastructure.
+
+        Available endpoints:
+            - `POST /chat`: Non-streaming chat endpoint. Send a message and get the final response.
+            - `GET /stream`: Server-Sent Events streaming endpoint for real-time updates.
+            - `GET /health`: Health check endpoint with server status and session count.
+            - `GET /sessions/{session_id}`: Get information about a specific session.
+            - `DELETE /sessions/{session_id}`: Delete a session.
+
+        Sessions maintain conversation memory across requests, enabling multi-turn
+        conversations with the agent.
+
+        Args:
+            host (str): Host address to bind the server to. Defaults to "0.0.0.0"
+                (all interfaces).
+            port (int): Port number to bind the server to. Defaults to 8000.
+            session_timeout (int): Session expiration time in seconds. Sessions that
+                haven't been accessed within this time are automatically cleaned up.
+                Defaults to 3600 (1 hour).
+            enable_cors (bool): Whether to enable CORS middleware for cross-origin
+                requests from browsers. Defaults to True.
+            allowed_origins (list[str] | None): List of allowed origins for CORS.
+                If None and CORS is enabled, allows all origins ("*").
+            log_level (str): Uvicorn log level. One of "critical", "error", "warning",
+                "info", "debug", "trace". Defaults to "info".
+
+        !!! example "Basic Usage"
+            ```python
+            import weave
+            from kawai import KawaiReactAgent, WebSearchTool, OpenAIModel
+
+            weave.init(project_name="kawai-server")
+
+            model = OpenAIModel(
+                model_id="google/gemini-3-flash-preview",
+                base_url="https://openrouter.ai/api/v1",
+                api_key_env_var="OPENROUTER_API_KEY",
+            )
+
+            agent = KawaiReactAgent(
+                model=model,
+                tools=[WebSearchTool()],
+                max_steps=10,
+            )
+
+            # Start the server (blocking)
+            agent.serve(port=8000)
+            ```
+
+        !!! example "Client Usage - Non-streaming"
+            ```python
+            import requests
+
+            # Send a chat request
+            response = requests.post(
+                "http://localhost:8000/chat",
+                json={
+                    "message": "What is the capital of France?",
+                    "session_id": "user-123"  # Optional: maintains conversation
+                }
+            )
+
+            result = response.json()
+            print(result["answer"])  # The agent's response
+            print(result["session_id"])  # Use this for follow-up messages
+            ```
+
+        !!! example "Client Usage - Streaming"
+            ```python
+            import requests
+            import json
+
+            # Connect to streaming endpoint
+            response = requests.get(
+                "http://localhost:8000/stream",
+                params={
+                    "message": "Search for latest AI news",
+                    "session_id": "user-123"
+                },
+                stream=True
+            )
+
+            # Process events as they arrive
+            for line in response.iter_lines():
+                if line:
+                    data = line.decode().removeprefix("data: ")
+                    event = json.loads(data)
+                    print(f"{event['type']}: {event['data']}")
+            ```
+
+        Note:
+            - This method blocks until the server is shut down (Ctrl+C)
+            - The server uses uvicorn as the ASGI server
+            - Sessions are stored in memory and lost on server restart
+            - For production use, consider using a reverse proxy like nginx
+        """
+        import uvicorn
+
+        from kawai.server.app import create_app
+
+        # Create the FastAPI app with this agent as the template
+        app = create_app(
+            agent=self,
+            session_timeout=session_timeout,
+            enable_cors=enable_cors,
+            allowed_origins=allowed_origins,
+        )
+
+        # Start the server
+        uvicorn.run(
+            app,
+            host=host,
+            port=port,
+            log_level=log_level,
+        )

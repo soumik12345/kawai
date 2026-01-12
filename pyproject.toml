@@ -5,11 +5,15 @@ description = "The Cute agentic framework"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
+    "anyio>=4.0.0",
+    "fastapi>=0.115.0",
     "litellm>=1.80.11",
     "pydantic>=2.12.5",
     "python-dotenv>=1.2.1",
     "requests>=2.32.5",
     "rich>=14.2.0",
+    "sse-starlette>=2.2.0",
+    "uvicorn[standard]>=0.34.0",
     "weave>=0.52.22",
 ]
 

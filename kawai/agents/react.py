@@ -214,7 +214,7 @@ class KawaiReactAgent(BaseModel):
             Triggers the `at_planning_end` callback with `updated_plan=True`.
         """
         tools_description = self._get_tools_description()
-        memory_summary = self._get_memory_summary(self.model.memory)
+        memory_summary = self._get_memory_summary(self.model.memory.get_messages())
 
         pre_messages = UPDATE_PLAN_PRE_MESSAGES.format(task=task)
         post_messages = UPDATE_PLAN_POST_MESSAGES.format(
@@ -499,7 +499,7 @@ class KawaiReactAgent(BaseModel):
 
             if is_finished and final_answer_call_id:
                 # Find the specific tool response with the matching tool_call_id
-                for item in self.model.memory:
+                for item in self.model.memory.get_messages():
                     if (
                         isinstance(item, dict)
                         and item.get("role") == "tool"
@@ -522,7 +522,7 @@ class KawaiReactAgent(BaseModel):
         return {
             "final_answer": final_answer,
             "steps": step_index + 1,
-            "memory": self.model.memory,
+            "memory": self.model.memory.get_messages(),
             "completed": is_finished,
             "plan": current_plan,
         }

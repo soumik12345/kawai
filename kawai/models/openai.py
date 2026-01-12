@@ -6,6 +6,8 @@ from openai import OpenAI
 from openai.types.chat import ChatCompletion
 from pydantic import BaseModel
 
+from kawai.memory.base import BaseMemory
+
 
 class OpenAIModel(BaseModel):
     """LLM interface that wraps OpenAI-compatible chat completion APIs.
@@ -80,7 +82,7 @@ class OpenAIModel(BaseModel):
     base_url: str | None = None
     api_key_env_var: str = "OPENAI_API_KEY"
     max_tokens: int | None = None
-    memory: list[dict[str, Any]] = []
+    memory: BaseMemory | None = None
     _client: OpenAI | None = None
 
     def model_post_init(self, __context: Any) -> None:
@@ -88,6 +90,7 @@ class OpenAIModel(BaseModel):
             base_url=self.base_url,
             api_key=os.getenv(self.api_key_env_var),
         )
+        self.memory = BaseMemory() if self.memory is None else self.memory
 
     def update_memory(self, content: str, role: str, **kwargs: Any) -> None:
         """Append a message to the conversation memory.
@@ -130,7 +133,7 @@ class OpenAIModel(BaseModel):
             )
             ```
         """
-        self.memory.append({"role": role, "content": content, **kwargs})
+        self.memory.add(content=content, role=role, **kwargs)
 
     @weave.op
     def predict_from_messages(
@@ -239,5 +242,7 @@ class OpenAIModel(BaseModel):
         if self.max_tokens is not None:
             completion_kwargs["max_tokens"] = self.max_tokens
         return self._client.chat.completions.create(
-            model=self.model_id, messages=self.memory, **completion_kwargs
+            model=self.model_id,
+            messages=self.memory.get_messages(),
+            **completion_kwargs,
         )

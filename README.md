@@ -3,7 +3,6 @@
 The Cute agentic framework.
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
-[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 ## Features
 
@@ -44,6 +43,10 @@ agent = KawaiReactAgent(
 result = agent.run("What's the latest news on AI?")
 print(result["final_answer"])
 ```
+
+## Examples
+
+* [Memory-augmented web-search agent](./examples/web_search.py)
 
 ## Built-in Tools
 

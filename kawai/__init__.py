@@ -1,5 +1,6 @@
 from kawai.agents.react import KawaiReactAgent
 from kawai.callback import KawaiCallback, KawaiLoggingCallback
+from kawai.memory.mem0_memory import Mem0Memory
 from kawai.models.openai import OpenAIModel
 from kawai.tools import (
     FinalAnswerTool,
@@ -20,4 +21,5 @@ __all__ = [
     "KawaiCallback",
     "KawaiLoggingCallback",
     "OpenAIModel",
+    "Mem0Memory",
 ]

@@ -82,4 +82,5 @@ nav:
   - API Reference:
     - Agents: api_reference/agents.md
     - Callbacks: api_reference/callbacks.md
+    - Models: api_reference/models.md
     - Tools: api_reference/tools.md

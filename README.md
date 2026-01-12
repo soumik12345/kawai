@@ -23,14 +23,18 @@ pip install git+https://github.com/soumik12345/kawai
 
 ```python
 import weave
-from kawai import KawaiReactAgent, WebSearchTool, KawaiLoggingCallback
+from kawai import KawaiReactAgent, WebSearchTool, KawaiLoggingCallback, OpenAIModel
 
 # Initialize Weave for tracking
 weave.init(project_name="my-project")
 
 # Create agent
 agent = KawaiReactAgent(
-    model="openai/gpt-4",
+    model=OpenAIModel(
+        model_id="google/gemini-3-flash-preview",
+        base_url="https://openrouter.ai/api/v1",
+        api_key_env_var="OPENROUTER_API_KEY",
+    ),
     tools=[WebSearchTool()],
     max_steps=10,
     callbacks=[KawaiLoggingCallback()]
@@ -84,7 +88,11 @@ Enable multi-step planning for complex tasks:
 
 ```python
 agent = KawaiReactAgent(
-    model="openai/gpt-4",
+    model=OpenAIModel(
+        model_id="google/gemini-3-flash-preview",
+        base_url="https://openrouter.ai/api/v1",
+        api_key_env_var="OPENROUTER_API_KEY",
+    ),
     tools=[WebSearchTool()],
     planning_interval=3,  # Re-plan every 3 steps
     max_steps=15
@@ -106,7 +114,11 @@ class MyCallback(KawaiCallback):
         print(f"Calling {tool_name}")
 
 agent = KawaiReactAgent(
-    model="openai/gpt-4",
+    model=OpenAIModel(
+        model_id="google/gemini-3-flash-preview",
+        base_url="https://openrouter.ai/api/v1",
+        api_key_env_var="OPENROUTER_API_KEY",
+    ),
     tools=[WebSearchTool()],
     callbacks=[MyCallback()]
 )

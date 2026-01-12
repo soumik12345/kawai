@@ -255,7 +255,7 @@ class KawaiReactAgent(BaseModel):
 
     def execute_tool_from_response_call(
         self,
-    ) -> tuple[list[dict[str, Any]], bool, str | None]:
+    ) -> tuple[bool, str | None]:
         """Execute one ReAct step: get LLM response, call tools, update memory.
 
         This method implements a single step of the ReAct loop:
@@ -266,17 +266,15 @@ class KawaiReactAgent(BaseModel):
 
         The method uses OpenAI Chat Completions format for all messages and
         properly links tool calls with their responses via tool_call_id.
-
-        Args:
-            memory (list[dict[str, Any]]): Current conversation memory in OpenAI format.
+        It operates on and modifies `self.model.memory` directly.
 
         Returns:
-            tuple[list[dict[str, Any]], bool, str | None]: A tuple containing:
-                - Updated memory with assistant message and tool results
+            tuple[bool, str | None]: A tuple containing:
                 - Boolean indicating if final_answer was called (task complete)
                 - The tool_call_id of the final_answer call, or None
 
         Note:
+            - Operates on and modifies `self.model.memory` directly
             - Triggers callbacks: at_reasoning, at_tool_call, at_tool_result, at_warning
             - Tool errors are caught and returned as {"error": "..."} in memory
             - If model doesn't make a tool call, prompts it to continue

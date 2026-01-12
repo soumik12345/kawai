@@ -197,7 +197,7 @@ class KawaiReactAgent(BaseModel):
         memory.append(
             {
                 "role": "user",
-                "content": "Now proceed and carry out this plan.",
+                "content": "Now proceed and carry out this plan. Remember to provide your reasoning before each tool call.",
             }
         )
 
@@ -255,7 +255,6 @@ class KawaiReactAgent(BaseModel):
             callback.at_planning_end(plan=plan, updated_plan=True)
 
         # Add the plan to the conversation for the agent to follow
-        # We use standard role-based messages that the API understands
         memory.append(
             {
                 "role": "assistant",
@@ -265,7 +264,7 @@ class KawaiReactAgent(BaseModel):
         memory.append(
             {
                 "role": "user",
-                "content": "Now proceed and carry out this updated plan.",
+                "content": "Now proceed and carry out this updated plan. Remember to provide your reasoning before each tool call.",
             }
         )
 
@@ -322,6 +321,22 @@ class KawaiReactAgent(BaseModel):
         if message.content:
             for callback in self.callbacks:
                 callback.at_reasoning(reasoning=message.content)
+
+        # Enforce ReAct pattern: require reasoning before tool calls
+        if message.tool_calls and not message.content:
+            # Model made a tool call without providing reasoning - reject and ask for reasoning
+            for callback in self.callbacks:
+                callback.at_warning(
+                    message="Model made a tool call without providing reasoning. Requesting reasoning first."
+                )
+            # Add a user message to require reasoning
+            memory.append(
+                {
+                    "role": "user",
+                    "content": "Before making a tool call, you MUST first explain your reasoning in plain text. What are you trying to accomplish and why are you choosing this tool? Please provide your reasoning, then make the tool call.",
+                }
+            )
+            return memory, is_finished, final_answer_call_id
 
         # Add assistant message to memory with tool_calls if present
         # This uses the correct OpenAI Chat Completions API format

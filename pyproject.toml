@@ -11,6 +11,9 @@ dependencies = [
     "requests>=2.32.5",
     "rich>=14.2.0",
     "weave>=0.52.22",
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.34.0",
+    "sse-starlette>=2.2.0",
 ]
 
 [project.optional-dependencies]

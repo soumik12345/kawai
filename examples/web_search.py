@@ -23,16 +23,17 @@ memory = Mem0Memory(
     mem0_config={
         # Use LiteLLM to route to OpenRouter (Mem0 doesn't support "openrouter" provider directly)
         "llm": {
-            "provider": "litellm",
+            "provider": "openai",
             "config": {
-                "model": "openrouter/google/gemini-3-flash-preview",
+                "model": "google/gemini-3-flash-preview",
                 "api_key": os.getenv("OPENROUTER_API_KEY"),
+                "openai_base_url": "https://openrouter.ai/api/v1",
             },
         },
         # Use HuggingFace embeddings (local, no API key required)
         "embedder": {
             "provider": "huggingface",
-            "config": {"model": "sentence-transformers/all-MiniLM-L6-v2"},
+            "config": {"model": "Qwen/Qwen3-Embedding-0.6B"},
         },
         # Use Chroma for local vector storage
         "vector_store": {"provider": "chroma", "config": {"path": "./mem0_db"}},
@@ -49,7 +50,8 @@ model = OpenAIModel(
 agent = KawaiReactAgent(
     model=model,
     tools=[WebSearchTool()],
-    planning_interval=3,
+    planning_interval=5,
+    max_steps=10,
     instructions="Focus on finding sources from 2026.",
     callbacks=[KawaiLoggingCallback()],
 )

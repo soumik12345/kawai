@@ -208,6 +208,6 @@ def event_to_sse(event: StreamEvent) -> str:
         event: The StreamEvent to convert.
 
     Returns:
-        String in SSE format: "data: {json}\\n\\n"
+        JSON string (EventSourceResponse will add "data: " prefix automatically)
     """
-    return f"data: {event.model_dump_json()}\n\n"
+    return event.model_dump_json()

@@ -50,11 +50,11 @@ model = OpenAIModel(
 agent = KawaiReactAgent(
     model=model,
     tools=[WebSearchTool()],
-    planning_interval=5,
-    max_steps=10,
+    planning_interval=3,
+    max_steps=5,
     instructions="Focus on finding sources from 2026.",
     callbacks=[KawaiLoggingCallback()],
 )
 result = agent.run(
-    prompt="Which tennis player won more Grand Slam titles, Henri Leconte or Jonathan Stark?"
+    prompt="Which genus of moth in the world's seventh-largest country contains only one species?"
 )

@@ -73,6 +73,8 @@ class KawaiReactAgent(BaseModel):
         - Requires `OPENROUTER_API_KEY` environment variable
         - `FinalAnswerTool` is automatically added to complete tasks
         - Agent loops until `FinalAnswerTool` is called or max_steps reached
+        - If max_steps is reached without completion, agent is forced to provide
+          a final answer in one extra step
         - With planning enabled, agent creates and updates execution plans
     """
 
@@ -417,8 +419,49 @@ class KawaiReactAgent(BaseModel):
 
         return is_finished, final_answer_call_id
 
+    def get_final_answer(self, step_index: int) -> str:
+        """If we exhausted max_steps without calling final_answer, force one extra step"""
+        for callback in self.callbacks:
+            callback.at_warning(
+                message=f"Reached max_steps ({self.max_steps}) without final answer. Forcing final_answer call in one extra step."
+            )
+
+        # Add a strong prompt to force the agent to provide a final answer
+        self.model.update_memory(
+            content=(
+                "You have reached the maximum number of steps. You MUST now call the final_answer tool "
+                "with your best answer based on all the information you have gathered so far. "
+                "Provide a comprehensive summary of what you have learned and your conclusion."
+            ),
+            role="user",
+        )
+
+        # Execute one final step
+        for callback in self.callbacks:
+            callback.at_step_start(step_index=step_index + 1)
+
+        is_finished, final_answer_call_id = self.execute_tool_from_response_call()
+
+        # Extract the final answer if it was provided
+        if is_finished and final_answer_call_id:
+            for item in self.model.memory.get_messages():
+                if (
+                    isinstance(item, dict)
+                    and item.get("role") == "tool"
+                    and item.get("tool_call_id") == final_answer_call_id
+                ):
+                    output = item.get("content")
+                    try:
+                        final_answer = json.loads(output)
+                    except (json.JSONDecodeError, TypeError):
+                        final_answer = output
+                    break
+            step_index += 1  # Increment to reflect the extra step
+
+        return final_answer
+
     @weave.op
-    def run(self, prompt: str) -> dict[str, Any]:
+    def run(self, prompt: str, force_provide_answer: bool) -> dict[str, Any]:
         """Execute the agent on a task and return the result.
 
         This is the main entry point for running the agent. It implements the full
@@ -431,22 +474,28 @@ class KawaiReactAgent(BaseModel):
            - Get reasoning and tool call from LLM
            - Execute tool and observe result
            - If final_answer called, extract and return answer
-        4. Return comprehensive result dictionary
+        4. If max_steps reached without final_answer, force one extra step to get
+           a final answer based on all information gathered
+        5. Return comprehensive result dictionary
 
         The method is tracked by Weave as an operation for full observability.
 
         Args:
             prompt (str): The task description or question for the agent to solve.
+            force_provide_answer (bool): Force to provide an answer even though `max_steps`
+                have been exhausted.
 
         Returns:
             dict[str, Any]: A dictionary containing:
-                - final_answer (Any): The final answer from FinalAnswerTool, or None
-                    if max_steps reached without completion
-                - steps (int): Number of ReAct steps executed
+                - final_answer (Any): The final answer from FinalAnswerTool. If max_steps
+                    is reached without completion, the agent is forced to provide a final
+                    answer in one extra step
+                - steps (int): Number of ReAct steps executed (may be max_steps + 1 if
+                    forced final answer was triggered)
                 - memory (list[dict[str, Any]]): Full conversation history in OpenAI
                     format, including all reasoning, tool calls, and results
                 - completed (bool): Whether the task completed successfully (final_answer
-                    was called)
+                    was called, either naturally or forced)
                 - plan (str | None): The final plan if planning was enabled, or None
 
         !!! example
@@ -459,16 +508,15 @@ class KawaiReactAgent(BaseModel):
 
             result = agent.run("What is the population of Tokyo?")
 
-            if result["completed"]:
-                print(f"Answer: {result['final_answer']}")
-                print(f"Took {result['steps']} steps")
-            else:
-                print("Task incomplete - reached max_steps")
+            print(f"Answer: {result['final_answer']}")
+            print(f"Took {result['steps']} steps")
+            print(f"Completed: {result['completed']}")
             ```
 
         Note:
-            - Triggers callbacks: at_run_start, at_step_start, at_run_end
+            - Triggers callbacks: at_run_start, at_step_start, at_run_end, at_warning
             - Also triggers planning and tool execution callbacks
+            - If max_steps is exhausted, triggers at_warning before forcing final answer
             - Tracked by Weave - view traces at wandb.ai/weave
         """
         for callback in self.callbacks:
@@ -515,6 +563,10 @@ class KawaiReactAgent(BaseModel):
                             final_answer = output
                         break
                 break
+
+        # If we exhausted max_steps without calling final_answer, force one extra step
+        if not is_finished and force_provide_answer:
+            final_answer = self.get_final_answer(step_index=step_index)
 
         for callback in self.callbacks:
             callback.at_run_end(answer=final_answer)

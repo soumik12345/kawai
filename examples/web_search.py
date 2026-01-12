@@ -18,4 +18,6 @@ agent = KawaiReactAgent(
     instructions="Focus on finding sources from 2026.",
     callbacks=[KawaiLoggingCallback()],
 )
-result = agent.run(prompt="Which tennis player won more Grand Slam titles, Henri Leconte or Jonathan Stark?")
+result = agent.run(
+    prompt="Which tennis player won more Grand Slam titles, Henri Leconte or Jonathan Stark?"
+)

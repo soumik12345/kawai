@@ -1,6 +1,6 @@
 # Kawai
 
-A Python ReAct agent framework with tool calling and optional planning capabilities.
+The Cute agentic framework.
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
@@ -43,15 +43,6 @@ agent = KawaiReactAgent(
 # Run task
 result = agent.run("What's the latest news on AI?")
 print(result["final_answer"])
-```
-
-## Environment Setup
-
-Create a `.env` file:
-
-```bash
-OPENROUTER_API_KEY=your_openrouter_key
-SERPER_API_KEY=your_serper_key  # For web search
 ```
 
 ## Built-in Tools

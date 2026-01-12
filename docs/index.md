@@ -45,6 +45,10 @@ result = agent.run("What's the latest news on AI?")
 print(result["final_answer"])
 ```
 
+## Examples
+
+* [Memory-augmented web-search agent](https://github.com/soumik12345/kawai/blob/main/examples/web_search.py)
+
 ## Built-in Tools
 
 - **WebSearchTool**: Google search via Serper API

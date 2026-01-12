@@ -210,78 +210,93 @@ class KawaiReactAgent(BaseModel):
 
         memory.append(assistant_message)
 
-        # Process tool calls if present
-        if message.tool_calls:
-            for tool_call in message.tool_calls:
-                tool_name = tool_call.function.name
-                tool_arguments = json.loads(tool_call.function.arguments)
+        # Handle case where model responds without making a tool call
+        if not message.tool_calls:
+            # Model responded without making a tool call - add a reminder
+            for callback in self.callbacks:
+                callback.at_warning(
+                    message="Model responded without making a tool call. Prompting to continue."
+                )
+            # Add a user message to remind the model to make a tool call
+            memory.append(
+                {
+                    "role": "user",
+                    "content": "You must make a tool call. If you have enough information to answer, use the final_answer tool. Otherwise, use an appropriate tool to gather more information.",
+                }
+            )
+            return memory, is_finished, final_answer_call_id
 
-                # Log tool call arguments
+        # Process tool calls
+        for tool_call in message.tool_calls:
+            tool_name = tool_call.function.name
+            tool_arguments = json.loads(tool_call.function.arguments)
+
+            # Log tool call arguments
+            for callback in self.callbacks:
+                callback.at_tool_call(
+                    tool_name=tool_name, tool_arguments=tool_arguments
+                )
+
+            # Execute the tool
+            tool_to_execute = self.tool_dict.get(tool_name)
+            if not tool_to_execute:
+                # Add tool response with role: "tool" (correct format)
+                error_content = json.dumps({"error": f"Unknown tool: {tool_name}"})
+                memory.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tool_call.id,
+                        "content": error_content,
+                    }
+                )
+                # Log error result
                 for callback in self.callbacks:
-                    callback.at_tool_call(
-                        tool_name=tool_name, tool_arguments=tool_arguments
+                    callback.at_tool_result(
+                        tool_name=tool_name, tool_result=error_content
                     )
+                continue
 
-                # Execute the tool
-                tool_to_execute = self.tool_dict.get(tool_name)
-                if not tool_to_execute:
-                    # Add tool response with role: "tool" (correct format)
-                    error_content = json.dumps({"error": f"Unknown tool: {tool_name}"})
-                    memory.append(
-                        {
-                            "role": "tool",
-                            "tool_call_id": tool_call.id,
-                            "content": error_content,
-                        }
+            try:
+                tool_execution_result = tool_to_execute.forward(**tool_arguments)
+
+                # Check if this is the final answer and track its call_id
+                if tool_name == "final_answer":
+                    is_finished = True
+                    final_answer_call_id = tool_call.id
+
+                # Add tool response with role: "tool" (correct format)
+                output_content = (
+                    json.dumps(tool_execution_result)
+                    if not isinstance(tool_execution_result, str)
+                    else tool_execution_result
+                )
+                memory.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tool_call.id,
+                        "content": output_content,
+                    }
+                )
+
+                # Log tool result
+                for callback in self.callbacks:
+                    callback.at_tool_result(
+                        tool_name=tool_name, tool_result=output_content
                     )
-                    # Log error result
-                    for callback in self.callbacks:
-                        callback.at_tool_result(
-                            tool_name=tool_name, tool_result=error_content
-                        )
-                    continue
-
-                try:
-                    tool_execution_result = tool_to_execute.forward(**tool_arguments)
-
-                    # Check if this is the final answer and track its call_id
-                    if tool_name == "final_answer":
-                        is_finished = True
-                        final_answer_call_id = tool_call.id
-
-                    # Add tool response with role: "tool" (correct format)
-                    output_content = (
-                        json.dumps(tool_execution_result)
-                        if not isinstance(tool_execution_result, str)
-                        else tool_execution_result
+            except Exception as e:
+                error_content = json.dumps({"error": str(e)})
+                memory.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tool_call.id,
+                        "content": error_content,
+                    }
+                )
+                # Log error result
+                for callback in self.callbacks:
+                    callback.at_tool_result(
+                        tool_name=tool_name, tool_result=error_content
                     )
-                    memory.append(
-                        {
-                            "role": "tool",
-                            "tool_call_id": tool_call.id,
-                            "content": output_content,
-                        }
-                    )
-
-                    # Log tool result
-                    for callback in self.callbacks:
-                        callback.at_tool_result(
-                            tool_name=tool_name, tool_result=output_content
-                        )
-                except Exception as e:
-                    error_content = json.dumps({"error": str(e)})
-                    memory.append(
-                        {
-                            "role": "tool",
-                            "tool_call_id": tool_call.id,
-                            "content": error_content,
-                        }
-                    )
-                    # Log error result
-                    for callback in self.callbacks:
-                        callback.at_tool_result(
-                            tool_name=tool_name, tool_result=error_content
-                        )
 
         return memory, is_finished, final_answer_call_id
 

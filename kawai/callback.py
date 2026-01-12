@@ -37,6 +37,10 @@ class KawaiCallback(BaseModel):
         """Called after a tool has been executed with its result."""
         pass
 
+    def at_warning(self, message: str):
+        """Called when the agent encounters a warning condition."""
+        pass
+
 
 class KawaiLoggingCallback(KawaiCallback):
     truncate: bool = False
@@ -140,5 +144,15 @@ class KawaiLoggingCallback(KawaiCallback):
                 title=f"[bold magenta]Tool Result: {tool_name}[/bold magenta]",
                 title_align="left",
                 border_style="magenta",
+            )
+        )
+
+    def at_warning(self, message: str):
+        self._console.print(
+            Panel(
+                message,
+                title="[bold red]Warning[/bold red]",
+                title_align="left",
+                border_style="red",
             )
         )

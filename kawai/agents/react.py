@@ -36,6 +36,9 @@ class KawaiReactAgent(BaseModel):
             is automatically added if not present.
         system_prompt (str): System prompt that defines the agent's behavior. Defaults
             to `SYSTEM_PROMPT` which enforces strict ReAct pattern.
+        instructions (str | None): Optional additional instructions appended to the
+            system prompt. Use this to provide task-specific guidance without replacing
+            the base ReAct behavior. Defaults to None.
         max_steps (int): Maximum number of ReAct steps before stopping. Defaults to 5.
         planning_interval (int | None): If set, agent generates/updates plans at this
             interval. None disables planning (default).
@@ -58,7 +61,8 @@ class KawaiReactAgent(BaseModel):
             tools=[WebSearchTool()],
             max_steps=10,
             planning_interval=3,  # Re-plan every 3 steps
-            callbacks=[KawaiLoggingCallback()]
+            callbacks=[KawaiLoggingCallback()],
+            instructions="Focus on finding recent sources from 2024."
         )
 
         # Run the agent
@@ -76,11 +80,13 @@ class KawaiReactAgent(BaseModel):
     model: str
     tools: list[KawaiTool]
     system_prompt: str = SYSTEM_PROMPT
+    instructions: str | None = None
     max_steps: int = 5
     planning_interval: int | None = None
     tool_dict: dict[str, KawaiTool] = Field(default_factory=dict)
     callbacks: list[KawaiCallback] = []
     _client: OpenAI | None = None
+    _compiled_system_prompt: str = ""
 
     def model_post_init(self, __context: Any) -> None:
         self.tool_dict = {tool.tool_name: tool for tool in self.tools}
@@ -92,6 +98,12 @@ class KawaiReactAgent(BaseModel):
             base_url="https://openrouter.ai/api/v1",
             api_key=os.getenv("OPENROUTER_API_KEY"),
         )
+        # Compile system prompt with instructions if provided
+        self._compiled_system_prompt = self.system_prompt
+        if self.instructions:
+            self._compiled_system_prompt = (
+                f"{self.system_prompt}\n\n{self.instructions}"
+            )
 
     def _get_tools_description(self) -> str:
         """Generate a description of available tools for planning prompts."""
@@ -482,7 +494,7 @@ class KawaiReactAgent(BaseModel):
             callback.at_run_start(prompt=prompt, model=self.model)
 
         memory: list[dict[str, Any]] = [
-            {"role": "system", "content": self.system_prompt},
+            {"role": "system", "content": self._compiled_system_prompt},
             {"role": "user", "content": prompt},
         ]
         final_answer = None

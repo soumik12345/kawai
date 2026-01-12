@@ -1,12 +1,11 @@
 import json
-import os
 from typing import Any
 
 import weave
-from openai import OpenAI
 from pydantic import BaseModel, Field
 
 from kawai.callback import KawaiCallback
+from kawai.models.openai import OpenAIModel
 from kawai.prompts import (
     INITIAL_PLAN_PROMPT,
     SYSTEM_PROMPT,
@@ -77,7 +76,7 @@ class KawaiReactAgent(BaseModel):
         - With planning enabled, agent creates and updates execution plans
     """
 
-    model: str
+    model: OpenAIModel
     tools: list[KawaiTool]
     system_prompt: str = SYSTEM_PROMPT
     instructions: str | None = None
@@ -85,7 +84,6 @@ class KawaiReactAgent(BaseModel):
     planning_interval: int | None = None
     tool_dict: dict[str, KawaiTool] = Field(default_factory=dict)
     callbacks: list[KawaiCallback] = []
-    _client: OpenAI | None = None
     _compiled_system_prompt: str = ""
 
     def model_post_init(self, __context: Any) -> None:
@@ -94,16 +92,13 @@ class KawaiReactAgent(BaseModel):
             final_answer_tool = FinalAnswerTool()
             self.tool_dict["final_answer"] = final_answer_tool
             self.tools.append(final_answer_tool)
-        self._client = OpenAI(
-            base_url="https://openrouter.ai/api/v1",
-            api_key=os.getenv("OPENROUTER_API_KEY"),
-        )
         # Compile system prompt with instructions if provided
         self._compiled_system_prompt = self.system_prompt
         if self.instructions:
             self._compiled_system_prompt = (
                 f"{self.system_prompt}\n\n{self.instructions}"
             )
+        self.model.update_memory(content=self._compiled_system_prompt, role="system")
 
     def _get_tools_description(self) -> str:
         """Generate a description of available tools for planning prompts."""
@@ -142,9 +137,7 @@ class KawaiReactAgent(BaseModel):
                     summary_parts.append(f"Tool output: {output}")
         return "\n".join(summary_parts)
 
-    def _generate_initial_plan(
-        self, task: str, memory: list[dict[str, Any]]
-    ) -> tuple[str, list[dict[str, Any]]]:
+    def _generate_initial_plan(self, task: str) -> tuple[str, list[dict[str, Any]]]:
         """Generate an initial plan for the task using the planning LLM.
 
         Creates a structured plan using the facts survey methodology:
@@ -172,39 +165,30 @@ class KawaiReactAgent(BaseModel):
             tools_description=tools_description, task=task
         )
 
-        planning_messages = [
-            {"role": "system", "content": "You are a planning assistant."},
-            {"role": "user", "content": planning_prompt},
-        ]
-
-        response = self._client.chat.completions.create(
-            model=self.model,
-            messages=planning_messages,
+        response = self.model.predict_from_messages(
+            messages=[
+                {"role": "system", "content": "You are a planning assistant."},
+                {"role": "user", "content": planning_prompt},
+            ]
         )
-
         plan = response.choices[0].message.content or ""
 
         for callback in self.callbacks:
             callback.at_planning_end(plan=plan, updated_plan=False)
 
         # Add the plan to the conversation for the agent to follow
-        memory.append(
-            {
-                "role": "assistant",
-                "content": f"I have created the following plan:\n\n{plan}",
-            }
+        self.model.update_memory(
+            content=f"I have created the following plan:\n\n{plan}", role="assistant"
         )
-        memory.append(
-            {
-                "role": "user",
-                "content": "Now proceed and carry out this plan. Remember to provide your reasoning before each tool call.",
-            }
+        self.model.update_memory(
+            content="Now proceed and carry out this plan. Remember to provide your reasoning before each tool call.",
+            role="user",
         )
 
-        return plan, memory
+        return plan
 
     def _generate_updated_plan(
-        self, task: str, memory: list[dict[str, Any]], remaining_steps: int
+        self, task: str, remaining_steps: int
     ) -> tuple[str, list[dict[str, Any]]]:
         """Generate an updated plan based on progress so far.
 
@@ -230,7 +214,7 @@ class KawaiReactAgent(BaseModel):
             Triggers the `at_planning_end` callback with `updated_plan=True`.
         """
         tools_description = self._get_tools_description()
-        memory_summary = self._get_memory_summary(memory)
+        memory_summary = self._get_memory_summary(self.model.memory)
 
         pre_messages = UPDATE_PLAN_PRE_MESSAGES.format(task=task)
         post_messages = UPDATE_PLAN_POST_MESSAGES.format(
@@ -238,37 +222,27 @@ class KawaiReactAgent(BaseModel):
         )
 
         planning_prompt = f"{pre_messages}\n\n{memory_summary}\n\n{post_messages}"
-
-        planning_messages = [
-            {"role": "system", "content": "You are a planning assistant."},
-            {"role": "user", "content": planning_prompt},
-        ]
-
-        response = self._client.chat.completions.create(
-            model=self.model,
-            messages=planning_messages,
+        response = self.model.predict_from_messages(
+            messages=[
+                {"role": "system", "content": "You are a planning assistant."},
+                {"role": "user", "content": planning_prompt},
+            ]
         )
-
         plan = response.choices[0].message.content or ""
 
         for callback in self.callbacks:
             callback.at_planning_end(plan=plan, updated_plan=True)
 
         # Add the plan to the conversation for the agent to follow
-        memory.append(
-            {
-                "role": "assistant",
-                "content": f"I have updated my plan based on progress so far:\n\n{plan}",
-            }
+        self.model.update_memory(
+            content=f"I have created the following plan:\n\n{plan}", role="assistant"
         )
-        memory.append(
-            {
-                "role": "user",
-                "content": "Now proceed and carry out this updated plan. Remember to provide your reasoning before each tool call.",
-            }
+        self.model.update_memory(
+            content="Now proceed and carry out this plan. Remember to provide your reasoning before each tool call.",
+            role="user",
         )
 
-        return plan, memory
+        return plan
 
     def _should_plan(self, step_idx: int) -> bool:
         """Determine if planning should occur at the current step."""
@@ -280,7 +254,7 @@ class KawaiReactAgent(BaseModel):
         return step_idx % self.planning_interval == 0
 
     def execute_tool_from_response_call(
-        self, memory: list[dict[str, Any]]
+        self,
     ) -> tuple[list[dict[str, Any]], bool, str | None]:
         """Execute one ReAct step: get LLM response, call tools, update memory.
 
@@ -307,47 +281,70 @@ class KawaiReactAgent(BaseModel):
             - Tool errors are caught and returned as {"error": "..."} in memory
             - If model doesn't make a tool call, prompts it to continue
         """
-        response = self._client.chat.completions.create(
-            model=self.model,
-            tools=[tool.to_json_schema() for tool in self.tools],
-            messages=memory,
-        )
-
         is_finished = False
         final_answer_call_id = None
-        message = response.choices[0].message
+        tools_schema = [tool.to_json_schema() for tool in self.tools]
 
-        # Log reasoning if present (assistant's thinking before tool calls)
-        if message.content:
-            for callback in self.callbacks:
-                callback.at_reasoning(reasoning=message.content)
+        # Step 1: Get reasoning from the model (no tools available to force text response)
+        reasoning_response = self.model.predict_from_memory(tools=None)
+        reasoning_message = reasoning_response.choices[0].message
 
-        # Enforce ReAct pattern: require reasoning before tool calls
-        if message.tool_calls and not message.content:
-            # Model made a tool call without providing reasoning - reject and ask for reasoning
+        if not reasoning_message.content:
+            # Model didn't provide any reasoning - prompt it to think
             for callback in self.callbacks:
                 callback.at_warning(
-                    message="Model made a tool call without providing reasoning. Requesting reasoning first."
+                    message="Model did not provide reasoning. Prompting to think first."
                 )
-            # Add a user message to require reasoning
-            memory.append(
-                {
-                    "role": "user",
-                    "content": "Before making a tool call, you MUST first explain your reasoning in plain text. What are you trying to accomplish and why are you choosing this tool? Please provide your reasoning, then make the tool call.",
-                }
+            self.model.update_memory(
+                content="You must first explain your reasoning in plain text. What are you trying to accomplish and what information do you need? Think step by step.",
+                role="user",
             )
-            return memory, is_finished, final_answer_call_id
+            return is_finished, final_answer_call_id
 
-        # Add assistant message to memory with tool_calls if present
-        # This uses the correct OpenAI Chat Completions API format
-        assistant_message: dict[str, Any] = {"role": "assistant"}
-        if message.content:
-            assistant_message["content"] = message.content
-        else:
-            assistant_message["content"] = None
+        # Log the reasoning
+        for callback in self.callbacks:
+            callback.at_reasoning(reasoning=reasoning_message.content)
 
-        if message.tool_calls:
-            assistant_message["tool_calls"] = [
+        # Add reasoning to memory as assistant message
+        self.model.update_memory(
+            content=reasoning_message.content,
+            role="assistant",
+        )
+
+        # Step 2: Now get the tool call with tools available
+        # Add a prompt to make the tool call based on the reasoning
+        self.model.update_memory(
+            content="Now make a tool call based on your reasoning above.",
+            role="user",
+        )
+
+        tool_response = self.model.predict_from_memory(tools=tools_schema)
+        tool_message = tool_response.choices[0].message
+
+        # Handle case where model still doesn't make a tool call
+        if not tool_message.tool_calls:
+            for callback in self.callbacks:
+                callback.at_warning(
+                    message="Model responded without making a tool call. Prompting to continue."
+                )
+            # Add the response to memory if it has content
+            if tool_message.content:
+                self.model.update_memory(
+                    content=tool_message.content,
+                    role="assistant",
+                )
+            # Remind the model to make a tool call
+            self.model.update_memory(
+                content="You must make a tool call. If you have enough information to answer, use the final_answer tool. Otherwise, use an appropriate tool to gather more information.",
+                role="user",
+            )
+            return is_finished, final_answer_call_id
+
+        # Add assistant message with tool_calls to memory
+        self.model.update_memory(
+            content=tool_message.content,
+            role="assistant",
+            tool_calls=[
                 {
                     "id": tool_call.id,
                     "type": "function",
@@ -356,29 +353,12 @@ class KawaiReactAgent(BaseModel):
                         "arguments": tool_call.function.arguments,
                     },
                 }
-                for tool_call in message.tool_calls
-            ]
-
-        memory.append(assistant_message)
-
-        # Handle case where model responds without making a tool call
-        if not message.tool_calls:
-            # Model responded without making a tool call - add a reminder
-            for callback in self.callbacks:
-                callback.at_warning(
-                    message="Model responded without making a tool call. Prompting to continue."
-                )
-            # Add a user message to remind the model to make a tool call
-            memory.append(
-                {
-                    "role": "user",
-                    "content": "You must make a tool call. If you have enough information to answer, use the final_answer tool. Otherwise, use an appropriate tool to gather more information.",
-                }
-            )
-            return memory, is_finished, final_answer_call_id
+                for tool_call in tool_message.tool_calls
+            ],
+        )
 
         # Process tool calls
-        for tool_call in message.tool_calls:
+        for tool_call in tool_message.tool_calls:
             tool_name = tool_call.function.name
             tool_arguments = json.loads(tool_call.function.arguments)
 
@@ -393,12 +373,8 @@ class KawaiReactAgent(BaseModel):
             if not tool_to_execute:
                 # Add tool response with role: "tool" (correct format)
                 error_content = json.dumps({"error": f"Unknown tool: {tool_name}"})
-                memory.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": tool_call.id,
-                        "content": error_content,
-                    }
+                self.model.update_memory(
+                    content=error_content, role="tool", tool_call_id=tool_call.id
                 )
                 # Log error result
                 for callback in self.callbacks:
@@ -421,12 +397,8 @@ class KawaiReactAgent(BaseModel):
                     if not isinstance(tool_execution_result, str)
                     else tool_execution_result
                 )
-                memory.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": tool_call.id,
-                        "content": output_content,
-                    }
+                self.model.update_memory(
+                    content=output_content, role="tool", tool_call_id=tool_call.id
                 )
 
                 # Log tool result
@@ -436,12 +408,8 @@ class KawaiReactAgent(BaseModel):
                     )
             except Exception as e:
                 error_content = json.dumps({"error": str(e)})
-                memory.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": tool_call.id,
-                        "content": error_content,
-                    }
+                self.model.update_memory(
+                    content=error_content, role="tool", tool_call_id=tool_call.id
                 )
                 # Log error result
                 for callback in self.callbacks:
@@ -449,7 +417,7 @@ class KawaiReactAgent(BaseModel):
                         tool_name=tool_name, tool_result=error_content
                     )
 
-        return memory, is_finished, final_answer_call_id
+        return is_finished, final_answer_call_id
 
     @weave.op
     def run(self, prompt: str) -> dict[str, Any]:
@@ -506,12 +474,9 @@ class KawaiReactAgent(BaseModel):
             - Tracked by Weave - view traces at wandb.ai/weave
         """
         for callback in self.callbacks:
-            callback.at_run_start(prompt=prompt, model=self.model)
+            callback.at_run_start(prompt=prompt, model=self.model.model_id)
 
-        memory: list[dict[str, Any]] = [
-            {"role": "system", "content": self._compiled_system_prompt},
-            {"role": "user", "content": prompt},
-        ]
+        self.model.update_memory(content=prompt, role="user")
         final_answer = None
         is_finished = False
         step_index = -1
@@ -524,22 +489,19 @@ class KawaiReactAgent(BaseModel):
             # Check if we should generate/update the plan
             if self._should_plan(step_index):
                 remaining_steps = self.max_steps - step_index
-                if step_index == 0:
-                    # Generate initial plan
-                    current_plan, memory = self._generate_initial_plan(prompt, memory)
-                else:
-                    # Update plan based on progress
-                    current_plan, memory = self._generate_updated_plan(
-                        prompt, memory, remaining_steps
+                current_plan = (
+                    self._generate_initial_plan(task=prompt)
+                    if step_index == 0
+                    else self._generate_updated_plan(
+                        task=prompt, remaining_steps=remaining_steps
                     )
+                )
 
-            memory, is_finished, final_answer_call_id = (
-                self.execute_tool_from_response_call(memory)
-            )
+            is_finished, final_answer_call_id = self.execute_tool_from_response_call()
 
             if is_finished and final_answer_call_id:
                 # Find the specific tool response with the matching tool_call_id
-                for item in memory:
+                for item in self.model.memory:
                     if (
                         isinstance(item, dict)
                         and item.get("role") == "tool"
@@ -562,7 +524,7 @@ class KawaiReactAgent(BaseModel):
         return {
             "final_answer": final_answer,
             "steps": step_index + 1,
-            "memory": memory,
+            "memory": self.model.memory,
             "completed": is_finished,
             "plan": current_plan,
         }

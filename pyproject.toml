@@ -1,7 +1,7 @@
 [project]
 name = "kawai"
 dynamic = ["version"]
-description = "Epub reader for the 21st century"
+description = "The Cute agentic framework"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [

@@ -17,6 +17,62 @@ from kawai.tools import FinalAnswerTool, KawaiTool
 
 
 class KawaiReactAgent(BaseModel):
+    """A [ReAct](https://arxiv.org/abs/2210.03629) agent that uses tool calling via OpenRouter API.
+
+    This agent implements the ReAct paradigm where the agent iteratively:
+    1. Reasons about what to do next
+    2. Acts by calling a tool
+    3. Observes the tool's output
+    4. Repeats until the task is complete
+
+    The agent maintains conversation history in OpenAI Chat Completions format and
+    uses function calling to execute tools. All executions are automatically tracked
+    by Weave for observability.
+
+    Attributes:
+        model (str): OpenRouter model identifier (e.g., "openai/gpt-4",
+            "anthropic/claude-3-sonnet", "google/gemini-3-flash-preview").
+        tools (list[KawaiTool]): List of tools available to the agent. FinalAnswerTool
+            is automatically added if not present.
+        system_prompt (str): System prompt that defines the agent's behavior. Defaults
+            to `SYSTEM_PROMPT` which enforces strict ReAct pattern.
+        max_steps (int): Maximum number of ReAct steps before stopping. Defaults to 5.
+        planning_interval (int | None): If set, agent generates/updates plans at this
+            interval. None disables planning (default).
+        tool_dict (dict[str, KawaiTool]): Internal mapping of tool names to tool objects.
+            Automatically populated from tools list.
+        callbacks (list[KawaiCallback]): List of callbacks for monitoring execution.
+            Empty list by default.
+
+    !!! example
+        ```python
+        import weave
+        from kawai import KawaiReactAgent, WebSearchTool, KawaiLoggingCallback
+
+        # Initialize Weave for tracking
+        weave.init(project_name="my-project")
+
+        # Create agent with web search capability
+        agent = KawaiReactAgent(
+            model="openai/gpt-4",
+            tools=[WebSearchTool()],
+            max_steps=10,
+            planning_interval=3,  # Re-plan every 3 steps
+            callbacks=[KawaiLoggingCallback()]
+        )
+
+        # Run the agent
+        result = agent.run("Who won the 2024 Nobel Prize in Physics?")
+        print(result["final_answer"])
+        ```
+
+    Note:
+        - Requires `OPENROUTER_API_KEY` environment variable
+        - `FinalAnswerTool` is automatically added to complete tasks
+        - Agent loops until `FinalAnswerTool` is called or max_steps reached
+        - With planning enabled, agent creates and updates execution plans
+    """
+
     model: str
     tools: list[KawaiTool]
     system_prompt: str = SYSTEM_PROMPT
@@ -77,7 +133,28 @@ class KawaiReactAgent(BaseModel):
     def _generate_initial_plan(
         self, task: str, memory: list[dict[str, Any]]
     ) -> tuple[str, list[dict[str, Any]]]:
-        """Generate an initial plan for the task."""
+        """Generate an initial plan for the task using the planning LLM.
+
+        Creates a structured plan using the facts survey methodology:
+        1. Facts given in the task
+        2. Facts to look up
+        3. Facts to derive
+        4. Step-by-step high-level plan
+
+        The plan is added to the conversation memory for the agent to follow.
+
+        Args:
+            task (str): The task description to plan for.
+            memory (list[dict[str, Any]]): Current conversation memory.
+
+        Returns:
+            tuple[str, list[dict[str, Any]]]: A tuple containing:
+                - The generated plan as a string
+                - Updated memory with plan appended
+
+        Note:
+            Triggers the `at_planning_end` callback with `updated_plan=False`.
+        """
         tools_description = self._get_tools_description()
         planning_prompt = INITIAL_PLAN_PROMPT.format(
             tools_description=tools_description, task=task
@@ -117,7 +194,29 @@ class KawaiReactAgent(BaseModel):
     def _generate_updated_plan(
         self, task: str, memory: list[dict[str, Any]], remaining_steps: int
     ) -> tuple[str, list[dict[str, Any]]]:
-        """Generate an updated plan based on progress so far."""
+        """Generate an updated plan based on progress so far.
+
+        Reviews execution history and updates the plan by:
+        1. Analyzing what has been accomplished
+        2. Updating the facts survey (given, learned, still to lookup, still to derive)
+        3. Creating revised high-level steps for remaining work
+
+        The updated plan is added to the conversation memory.
+
+        Args:
+            task (str): The original task description.
+            memory (list[dict[str, Any]]): Current conversation memory including
+                all previous steps and tool calls.
+            remaining_steps (int): Number of steps remaining before max_steps limit.
+
+        Returns:
+            tuple[str, list[dict[str, Any]]]: A tuple containing:
+                - The updated plan as a string
+                - Updated memory with new plan appended
+
+        Note:
+            Triggers the `at_planning_end` callback with `updated_plan=True`.
+        """
         tools_description = self._get_tools_description()
         memory_summary = self._get_memory_summary(memory)
 
@@ -172,6 +271,31 @@ class KawaiReactAgent(BaseModel):
     def execute_tool_from_response_call(
         self, memory: list[dict[str, Any]]
     ) -> tuple[list[dict[str, Any]], bool, str | None]:
+        """Execute one ReAct step: get LLM response, call tools, update memory.
+
+        This method implements a single step of the ReAct loop:
+        1. Calls the LLM with current memory and tool schemas
+        2. Parses the LLM response for reasoning and tool calls
+        3. Executes any tool calls and appends results to memory
+        4. Handles errors and edge cases (no tool call, unknown tool, etc.)
+
+        The method uses OpenAI Chat Completions format for all messages and
+        properly links tool calls with their responses via tool_call_id.
+
+        Args:
+            memory (list[dict[str, Any]]): Current conversation memory in OpenAI format.
+
+        Returns:
+            tuple[list[dict[str, Any]], bool, str | None]: A tuple containing:
+                - Updated memory with assistant message and tool results
+                - Boolean indicating if final_answer was called (task complete)
+                - The tool_call_id of the final_answer call, or None
+
+        Note:
+            - Triggers callbacks: at_reasoning, at_tool_call, at_tool_result, at_warning
+            - Tool errors are caught and returned as {"error": "..."} in memory
+            - If model doesn't make a tool call, prompts it to continue
+        """
         response = self._client.chat.completions.create(
             model=self.model,
             tools=[tool.to_json_schema() for tool in self.tools],
@@ -302,6 +426,58 @@ class KawaiReactAgent(BaseModel):
 
     @weave.op
     def run(self, prompt: str) -> dict[str, Any]:
+        """Execute the agent on a task and return the result.
+
+        This is the main entry point for running the agent. It implements the full
+        ReAct loop with optional planning:
+
+        1. Initialize memory with system prompt and task
+        2. (Optional) Generate initial plan if planning_interval is set
+        3. Loop up to max_steps:
+           - (Optional) Update plan at planning_interval
+           - Get reasoning and tool call from LLM
+           - Execute tool and observe result
+           - If final_answer called, extract and return answer
+        4. Return comprehensive result dictionary
+
+        The method is tracked by Weave as an operation for full observability.
+
+        Args:
+            prompt (str): The task description or question for the agent to solve.
+
+        Returns:
+            dict[str, Any]: A dictionary containing:
+                - final_answer (Any): The final answer from FinalAnswerTool, or None
+                    if max_steps reached without completion
+                - steps (int): Number of ReAct steps executed
+                - memory (list[dict[str, Any]]): Full conversation history in OpenAI
+                    format, including all reasoning, tool calls, and results
+                - completed (bool): Whether the task completed successfully (final_answer
+                    was called)
+                - plan (str | None): The final plan if planning was enabled, or None
+
+        !!! example
+            ```python
+            agent = KawaiReactAgent(
+                model="openai/gpt-4",
+                tools=[WebSearchTool()],
+                max_steps=5
+            )
+
+            result = agent.run("What is the population of Tokyo?")
+
+            if result["completed"]:
+                print(f"Answer: {result['final_answer']}")
+                print(f"Took {result['steps']} steps")
+            else:
+                print("Task incomplete - reached max_steps")
+            ```
+
+        Note:
+            - Triggers callbacks: at_run_start, at_step_start, at_run_end
+            - Also triggers planning and tool execution callbacks
+            - Tracked by Weave - view traces at wandb.ai/weave
+        """
         for callback in self.callbacks:
             callback.at_run_start(prompt=prompt, model=self.model)
 

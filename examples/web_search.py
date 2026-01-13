@@ -24,7 +24,7 @@ memory = Mem0Memory(
         "llm": {
             "provider": "openai",
             "config": {
-                "model": "google/gemini-3-flash-preview",
+                "model": "anthropic/claude-haiku-4.5",
                 "api_key": os.getenv("OPENROUTER_API_KEY"),
                 "openai_base_url": "https://openrouter.ai/api/v1",
             },
@@ -40,10 +40,11 @@ memory = Mem0Memory(
 )
 
 model = OpenAIModel(
-    model_id="google/gemini-3-flash-preview",
+    model_id="anthropic/claude-haiku-4.5",
     base_url="https://openrouter.ai/api/v1",
     api_key_env_var="OPENROUTER_API_KEY",
     memory=memory,
+    enable_cache=True,
 )
 
 agent = KawaiReactAgent(
@@ -55,5 +56,6 @@ agent = KawaiReactAgent(
     callbacks=[KawaiLoggingCallback()],
 )
 result = agent.run(
-    prompt="Which genus of moth in the world's seventh-largest country contains only one species?"
+    prompt="Which genus of moth in the world's seventh-largest country contains only one species?",
+    force_provide_answer=True,
 )

@@ -7,6 +7,7 @@ from openai.types.chat import ChatCompletion
 from pydantic import BaseModel
 
 from kawai.memory.base import BaseMemory
+from kawai.models.prompt_cache import PromptCache
 
 
 class OpenAIModel(BaseModel):
@@ -83,6 +84,8 @@ class OpenAIModel(BaseModel):
     api_key_env_var: str = "OPENAI_API_KEY"
     max_tokens: int | None = None
     memory: BaseMemory | None = None
+    enable_cache: bool = False
+    cache: PromptCache | None = None
     _client: OpenAI | None = None
 
     def model_post_init(self, __context: Any) -> None:
@@ -91,6 +94,8 @@ class OpenAIModel(BaseModel):
             api_key=os.getenv(self.api_key_env_var),
         )
         self.memory = BaseMemory() if self.memory is None else self.memory
+        if self.enable_cache and self.cache is None:
+            self.cache = PromptCache()
 
     def update_memory(self, content: str, role: str, **kwargs: Any) -> None:
         """Append a message to the conversation memory.
@@ -189,9 +194,20 @@ class OpenAIModel(BaseModel):
             completion_kwargs["tools"] = tools
         if self.max_tokens is not None:
             completion_kwargs["max_tokens"] = self.max_tokens
-        return self._client.chat.completions.create(
+        # Check cache first
+        if self.enable_cache and self.cache:
+            cache_key = self.cache._generate_key(messages, tools, self.model_id)
+            cached_response = self.cache.get(cache_key)
+            if cached_response:
+                return cached_response
+        # Make LLM call
+        response = self._client.chat.completions.create(
             model=self.model_id, messages=messages, **completion_kwargs
         )
+        # Store in cache
+        if self.enable_cache and self.cache:
+            self.cache.set(cache_key, response)
+        return response
 
     @weave.op
     def predict_from_memory(
@@ -241,8 +257,18 @@ class OpenAIModel(BaseModel):
             completion_kwargs["tools"] = tools
         if self.max_tokens is not None:
             completion_kwargs["max_tokens"] = self.max_tokens
-        return self._client.chat.completions.create(
-            model=self.model_id,
-            messages=self.memory.get_messages(),
-            **completion_kwargs,
+        messages = self.memory.get_messages()
+        # Check cache
+        if self.enable_cache and self.cache:
+            cache_key = self.cache._generate_key(messages, tools, self.model_id)
+            cached_response = self.cache.get(cache_key)
+            if cached_response:
+                return cached_response
+        # Make LLM call
+        response = self._client.chat.completions.create(
+            model=self.model_id, messages=messages, **completion_kwargs
         )
+        # Store in cache
+        if self.enable_cache and self.cache:
+            self.cache.set(cache_key, response)
+        return response

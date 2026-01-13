@@ -4,6 +4,7 @@ from typing import Any
 import weave
 from openai import OpenAI
 from openai.types.chat import ChatCompletion
+from openai.types.completion_usage import CompletionUsage
 from pydantic import BaseModel
 
 from kawai.memory.base import BaseMemory
@@ -86,6 +87,7 @@ class OpenAIModel(BaseModel):
     memory: BaseMemory | None = None
     enable_cache: bool = False
     cache: PromptCache | None = None
+    token_budget_history: list[CompletionUsage] = []
     _client: OpenAI | None = None
 
     def model_post_init(self, __context: Any) -> None:
@@ -139,6 +141,35 @@ class OpenAIModel(BaseModel):
             ```
         """
         self.memory.add(content=content, role=role, **kwargs)
+
+    @weave.op
+    def make_llm_call(self, messages, **completion_kwargs) -> ChatCompletion:
+        response = self._client.chat.completions.create(
+            model=self.model_id, messages=messages, **completion_kwargs
+        )
+        self.token_budget_history.append(response.usage)
+        return response
+
+    def get_cumulative_token_usage(self) -> dict[str, int]:
+        """Get cumulative token usage across all LLM calls.
+
+        Returns:
+            dict[str, int]: Dictionary with keys:
+                - input_tokens: Total input/prompt tokens used
+                - output_tokens: Total output/completion tokens used
+                - total_tokens: Total tokens (input + output)
+        """
+        input_tokens = 0
+        output_tokens = 0
+        for usage in self.token_budget_history:
+            if usage:
+                input_tokens += usage.prompt_tokens or 0
+                output_tokens += usage.completion_tokens or 0
+        return {
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "total_tokens": input_tokens + output_tokens,
+        }
 
     @weave.op
     def predict_from_messages(
@@ -195,17 +226,18 @@ class OpenAIModel(BaseModel):
         if self.max_tokens is not None:
             completion_kwargs["max_tokens"] = self.max_tokens
         # Check cache first
+        cache_key = None
         if self.enable_cache and self.cache:
-            cache_key = self.cache._generate_key(messages, tools, self.model_id)
+            cache_key = self.cache._generate_key(
+                messages, tools, self.model_id, self.max_tokens
+            )
             cached_response = self.cache.get(cache_key)
             if cached_response:
                 return cached_response
         # Make LLM call
-        response = self._client.chat.completions.create(
-            model=self.model_id, messages=messages, **completion_kwargs
-        )
+        response = self.make_llm_call(messages=messages, **completion_kwargs)
         # Store in cache
-        if self.enable_cache and self.cache:
+        if self.enable_cache and self.cache and cache_key:
             self.cache.set(cache_key, response)
         return response
 
@@ -259,16 +291,17 @@ class OpenAIModel(BaseModel):
             completion_kwargs["max_tokens"] = self.max_tokens
         messages = self.memory.get_messages()
         # Check cache
+        cache_key = None
         if self.enable_cache and self.cache:
-            cache_key = self.cache._generate_key(messages, tools, self.model_id)
+            cache_key = self.cache._generate_key(
+                messages, tools, self.model_id, self.max_tokens
+            )
             cached_response = self.cache.get(cache_key)
             if cached_response:
                 return cached_response
         # Make LLM call
-        response = self._client.chat.completions.create(
-            model=self.model_id, messages=messages, **completion_kwargs
-        )
+        response = self.make_llm_call(messages=messages, **completion_kwargs)
         # Store in cache
-        if self.enable_cache and self.cache:
+        if self.enable_cache and self.cache and cache_key:
             self.cache.set(cache_key, response)
         return response

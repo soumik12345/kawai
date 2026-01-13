@@ -58,12 +58,21 @@ class KawaiCallback(BaseModel):
         """
         pass
 
-    def at_run_end(self, answer: str):
+    def at_run_end(
+        self,
+        answer: str,
+        cumulative_input_tokens: int,
+        cumulative_output_tokens: int,
+        cumulative_total_tokens: int,
+    ):
         """Called when the agent run completes.
 
         Args:
             answer (str): The final answer from the agent, or None if max_steps
                 was reached without completion.
+            cumulative_input_tokens (int): Total input tokens used during the run.
+            cumulative_output_tokens (int): Total output tokens used during the run.
+            cumulative_total_tokens (int): Total tokens (input + output) used during the run.
         """
         pass
 
@@ -122,6 +131,23 @@ class KawaiCallback(BaseModel):
 
         Args:
             message (str): Description of the warning condition.
+        """
+        pass
+
+    def at_step_end(
+        self,
+        step_index: int,
+        cumulative_input_tokens: int,
+        cumulative_output_tokens: int,
+        cumulative_total_tokens: int,
+    ):
+        """Called at the end of each ReAct step with cumulative token usage.
+
+        Args:
+            step_index (int): The zero-based index of the current step.
+            cumulative_input_tokens (int): Total input tokens used so far.
+            cumulative_output_tokens (int): Total output tokens used so far.
+            cumulative_total_tokens (int): Total tokens (input + output) used so far.
         """
         pass
 
@@ -200,13 +226,26 @@ class KawaiLoggingCallback(KawaiCallback):
             )
         )
 
-    def at_run_end(self, answer: str):
+    def at_run_end(
+        self,
+        answer: str,
+        cumulative_input_tokens: int,
+        cumulative_output_tokens: int,
+        cumulative_total_tokens: int,
+    ):
+        token_info = (
+            f"Input: [cyan]{cumulative_input_tokens:,}[/cyan] | "
+            f"Output: [green]{cumulative_output_tokens:,}[/green] | "
+            f"Total: [yellow]{cumulative_total_tokens:,}[/yellow]"
+        )
         self._console.print(
             Panel(
                 Markdown(str(answer) if answer else "No answer provided"),
                 title="[bold yellow]Final Answer[/bold yellow]",
                 title_align="center",
                 border_style="yellow",
+                subtitle=f"[dim]Token Budget → {token_info}[/dim]",
+                subtitle_align="right",
             )
         )
 
@@ -291,3 +330,18 @@ class KawaiLoggingCallback(KawaiCallback):
                 border_style="red",
             )
         )
+
+    def at_step_end(
+        self,
+        step_index: int,
+        cumulative_input_tokens: int,
+        cumulative_output_tokens: int,
+        cumulative_total_tokens: int,
+    ):
+        token_info = (
+            f"[dim]Token Budget → "
+            f"Input: [cyan]{cumulative_input_tokens:,}[/cyan] | "
+            f"Output: [green]{cumulative_output_tokens:,}[/green] | "
+            f"Total: [yellow]{cumulative_total_tokens:,}[/yellow][/dim]"
+        )
+        self._console.print(token_info)

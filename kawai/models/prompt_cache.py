@@ -189,20 +189,23 @@ class PromptCache(BaseModel):
     _misses: int = 0
 
     def model_post_init(self, __context: Any) -> None:
-        # Ensure existence of cache dir
-        Path(self.cache_dir).mkdir(parents=True, exist_ok=True)
+        if self.persist:
+            # Ensure existence of cache dir
+            Path(self.cache_dir).mkdir(parents=True, exist_ok=True)
 
-        # Load cache from cache dir
-        cache_file = os.path.join(self.cache_dir, "promptcache.pkl")
-        if os.path.exists(cache_file):
-            try:
-                with open(cache_file, "rb") as f:
-                    data = pickle.load(f)
-                    self.cache = data.get("cache", OrderedDict())
-                    self._hits = data.get("hits", 0)
-                    self._misses = data.get("misses", 0)
-            except Exception:
-                self.cache = OrderedDict()
+            # Load cache from cache dir
+            cache_file = os.path.join(self.cache_dir, "promptcache.pkl")
+            if os.path.exists(cache_file):
+                try:
+                    with open(cache_file, "rb") as f:
+                        data = pickle.load(f)
+                        self.cache = data.get("cache", OrderedDict())
+                        self._hits = data.get("hits", 0)
+                        self._misses = data.get("misses", 0)
+                except Exception:
+                    self.cache = OrderedDict()
+
+        self.evict_expired_entries()
 
     def _save_to_disk(self) -> None:
         """Persist cache to disk using pickle serialization.
@@ -217,6 +220,8 @@ class PromptCache(BaseModel):
             - Synchronous I/O - may impact performance for large caches
             - File: {cache_dir}/promptcache.pkl
         """
+        if not self.persist:
+            return
         cache_file = os.path.join(self.cache_dir, "promptcache.pkl")
         try:
             with open(cache_file, "wb") as f:
@@ -234,6 +239,7 @@ class PromptCache(BaseModel):
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None,
         model_id: str,
+        max_tokens: int | None = None,
     ) -> str:
         """Generate a deterministic cache key from request parameters.
 
@@ -247,6 +253,8 @@ class PromptCache(BaseModel):
             tools (list[dict[str, Any]] | None): Optional list of tool/function
                 schemas in OpenAI format. None if no tools are used.
             model_id (str): Model identifier (e.g., "gpt-4", "claude-3-sonnet").
+            max_tokens (int | None): Maximum tokens for the completion. Different
+                values produce different cache keys. Defaults to None.
 
         Returns:
             str: 64-character hexadecimal SHA256 hash string.
@@ -255,7 +263,7 @@ class PromptCache(BaseModel):
             - Messages and tools are JSON-serialized with sorted keys for consistency
             - Different models with same messages/tools produce different keys
             - Even minor differences (whitespace, order) result in different keys
-            - Key format: sha256(f"{model_id}:{messages_json}:{tools_json}")
+            - Key format: sha256(f"{model_id}:{max_tokens}:{messages_json}:{tools_json}")
 
         !!! example
             ```python
@@ -270,45 +278,39 @@ class PromptCache(BaseModel):
         """
         messages_str = json.dumps(messages, sort_keys=True)
         tools_str = json.dumps(tools, sort_keys=True) if tools else ""
-        key_content = f"{model_id}:{messages_str}:{tools_str}"
+        max_tokens_str = str(max_tokens) if max_tokens is not None else ""
+        key_content = f"{model_id}:{max_tokens_str}:{messages_str}:{tools_str}"
         return sha256(key_content.encode()).hexdigest()
 
     def evict_expired_entries(self) -> int:
-        """Manually remove all expired cache entries.
+        """Remove all expired entries from the cache.
 
-        Scans the entire cache and removes entries that have exceeded their
-        time-to-live. This is called automatically during normal cache operations,
-        but can be invoked manually for explicit cleanup.
+        Iterates through all cache entries and removes those whose age
+        exceeds the configured time_to_live.
 
         Returns:
             int: Number of entries that were evicted.
 
         Note:
-            - O(n) operation where n is the cache size
-            - Triggers disk save if any entries were evicted and persist=True
-            - Entries are also checked for expiration during get() operations
-
-        !!! example
-            ```python
-            cache = PromptCache(time_to_live=3600)
-
-            # ... use cache ...
-
-            # Manually clean up expired entries
-            evicted = cache.evict_expired_entries()
-            print(f"Removed {evicted} expired entries")
-            ```
+            - Called automatically during cache initialization
+            - Saves to disk after eviction if persist=True
         """
+        if not self.cache:
+            return 0
+
         current_time = time()
         expired_keys = [
             key
             for key, entry in self.cache.items()
             if current_time - entry.timestamp > self.time_to_live
         ]
+
         for key in expired_keys:
             del self.cache[key]
-        if expired_keys and self.persist:
+
+        if expired_keys:
             self._save_to_disk()
+
         return len(expired_keys)
 
     def get(self, key: str) -> ChatCompletion | None:
@@ -364,8 +366,7 @@ class PromptCache(BaseModel):
         if time() - entry.timestamp > self.time_to_live:
             del self.cache[key]
             self._misses += 1
-            if self.persist:
-                self._save_to_disk()
+            self._save_to_disk()
             return None
 
         # Move to end (LRU)

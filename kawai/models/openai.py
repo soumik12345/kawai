@@ -9,6 +9,7 @@ from pydantic import BaseModel
 
 from kawai.memory.base import BaseMemory
 from kawai.models.prompt_cache import PromptCache
+from kawai.models.tool_cache import ToolCache
 
 
 class OpenAIModel(BaseModel):
@@ -86,7 +87,9 @@ class OpenAIModel(BaseModel):
     max_tokens: int | None = None
     memory: BaseMemory | None = None
     enable_cache: bool = False
+    enable_tool_cache: bool = False
     cache: PromptCache | None = None
+    tool_cache: ToolCache | None = None
     token_budget_history: list[CompletionUsage] = []
     _client: OpenAI | None = None
 
@@ -98,6 +101,8 @@ class OpenAIModel(BaseModel):
         self.memory = BaseMemory() if self.memory is None else self.memory
         if self.enable_cache and self.cache is None:
             self.cache = PromptCache()
+        if self.enable_tool_cache and self.tool_cache is None:
+            self.tool_cache = ToolCache()
 
     def update_memory(self, content: str, role: str, **kwargs: Any) -> None:
         """Append a message to the conversation memory.

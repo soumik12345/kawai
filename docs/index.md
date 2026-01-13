@@ -8,10 +8,12 @@ The Cute agentic framework.
 ## Features
 
 - **ReAct Pattern**: Implements Reasoning and Acting paradigm with strict one-tool-per-step execution
-- **Tool Calling**: OpenAI-compatible function calling via OpenRouter API
+- **Tool Calling**: OpenAI-compatible function calling via OpenAI-compatible endpoint
 - **Optional Planning**: Multi-step planning with configurable re-planning intervals
 - **Rich Logging**: Color-coded console output with syntax highlighting
-- **Weave Integration**: Automatic experiment tracking and observability
+- **[Weave](https://weave-docs.wandb.ai/) Integration**: Automatic experiment tracking and observability
+- **REST API Deployment**: Deploy agents as REST APIs with streaming support
+- **Caching Strategies**: Aggressive prompt and tool caching strategies to save your token budget
 
 ## Installation
 

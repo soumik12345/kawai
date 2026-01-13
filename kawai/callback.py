@@ -124,6 +124,14 @@ class KawaiCallback(BaseModel):
         """
         pass
 
+    def at_tool_cache_hit(self, tool_name: str):
+        """Called when a tool execution result is retrieved from cache.
+
+        Args:
+            tool_name (str): The name of the tool whose cached result was used.
+        """
+        pass
+
     def at_warning(self, message: str):
         """Called when the agent encounters a warning condition.
 
@@ -319,6 +327,11 @@ class KawaiLoggingCallback(KawaiCallback):
                 title_align="left",
                 border_style="magenta",
             )
+        )
+
+    def at_tool_cache_hit(self, tool_name: str):
+        self._console.print(
+            f"[dim cyan]  ⚡ Cache hit: Using cached result for {tool_name}[/dim cyan]"
         )
 
     def at_warning(self, message: str):

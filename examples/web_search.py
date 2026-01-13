@@ -45,6 +45,7 @@ model = OpenAIModel(
     api_key_env_var="OPENROUTER_API_KEY",
     memory=memory,
     enable_cache=True,
+    enable_tool_cache=True,
 )
 
 agent = KawaiReactAgent(

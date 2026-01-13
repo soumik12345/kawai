@@ -545,6 +545,16 @@ class KawaiReactAgent(BaseModel):
 
             is_finished, final_answer_call_id = self.execute_tool_from_response_call()
 
+            # Call at_step_end with cumulative token usage
+            token_usage = self.model.get_cumulative_token_usage()
+            for callback in self.callbacks:
+                callback.at_step_end(
+                    step_index=step_index,
+                    cumulative_input_tokens=token_usage["input_tokens"],
+                    cumulative_output_tokens=token_usage["output_tokens"],
+                    cumulative_total_tokens=token_usage["total_tokens"],
+                )
+
             if is_finished and final_answer_call_id:
                 # Find the specific tool response with the matching tool_call_id
                 for item in self.model.memory.get_messages():
@@ -568,8 +578,14 @@ class KawaiReactAgent(BaseModel):
         if not is_finished and force_provide_answer:
             final_answer = self.get_final_answer(step_index=step_index)
 
+        token_usage = self.model.get_cumulative_token_usage()
         for callback in self.callbacks:
-            callback.at_run_end(answer=final_answer)
+            callback.at_run_end(
+                answer=final_answer,
+                cumulative_input_tokens=token_usage["input_tokens"],
+                cumulative_output_tokens=token_usage["output_tokens"],
+                cumulative_total_tokens=token_usage["total_tokens"],
+            )
 
         return {
             "final_answer": final_answer,

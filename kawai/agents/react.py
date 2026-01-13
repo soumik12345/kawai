@@ -16,7 +16,7 @@ from kawai.tools import FinalAnswerTool, KawaiTool
 
 
 class KawaiReactAgent(BaseModel):
-    """A [ReAct](https://arxiv.org/abs/2210.03629) agent that uses tool calling via OpenRouter API.
+    """A [ReAct](https://arxiv.org/abs/2210.03629) agent that uses tool calling.
 
     This agent implements the ReAct paradigm where the agent iteratively:
     1. Reasons about what to do next
@@ -384,7 +384,31 @@ class KawaiReactAgent(BaseModel):
                 continue
 
             try:
-                tool_execution_result = tool_to_execute.forward(**tool_arguments)
+                cache_key = None
+                cached_result = None
+
+                if self.model.enable_tool_cache and self.model.tool_cache:
+                    cache_key = self.model.tool_cache._generate_key(
+                        tool_name, tool_arguments
+                    )
+                    cached_result = self.model.tool_cache.get(cache_key)
+
+                # Use cached result or execute tool
+                if cached_result is not None:
+                    tool_execution_result = cached_result
+                    # Optionally log that this was a cache hit via callback
+                    for callback in self.callbacks:
+                        callback.at_tool_cache_hit(tool_name=tool_name)
+                else:
+                    tool_execution_result = tool_to_execute.forward(**tool_arguments)
+
+                    # Store result in cache if caching is enabled
+                    if (
+                        self.model.enable_tool_cache
+                        and self.model.tool_cache
+                        and cache_key
+                    ):
+                        self.model.tool_cache.set(cache_key, tool_execution_result)
 
                 # Check if this is the final answer and track its call_id
                 if tool_name == "final_answer":

@@ -1,4 +1,7 @@
-# Kawai
+<div style="display: flex; align-items: center; gap: 1rem; margin-bottom: 1rem;">
+  <img src="./assets/kawai-logo.png" alt="Kawai Logo" style="width: 120px; height: 120px; border-radius: 50%; object-fit: cover;">
+  <h1 style="margin: 0; font-size: 3.5rem;">Kawai</h1>
+</div>
 
 The Cute agentic framework.
 
@@ -191,7 +194,6 @@ See the [deployment guide](docs/deployment.md) for production deployment options
 ## Examples
 
 * [Memory-augmented web-search agent](./examples/web_search.py)
-* [REST API server deployment](./examples/serve_example.py)
 
 ## 🙏 Acknowledgments
 

@@ -387,7 +387,11 @@ class KawaiReactAgent(BaseModel):
                 cache_key = None
                 cached_result = None
 
-                if self.model.enable_tool_cache and self.model.tool_cache:
+                if (
+                    self.model.enable_tool_cache
+                    and self.model.tool_cache
+                    and tool_to_execute.cacheable
+                ):
                     cache_key = self.model.tool_cache._generate_key(
                         tool_name, tool_arguments
                     )
@@ -407,6 +411,7 @@ class KawaiReactAgent(BaseModel):
                         self.model.enable_tool_cache
                         and self.model.tool_cache
                         and cache_key
+                        and tool_to_execute.cacheable
                     ):
                         self.model.tool_cache.set(cache_key, tool_execution_result)
 

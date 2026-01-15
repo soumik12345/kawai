@@ -44,6 +44,7 @@ class FinalAnswerTool(KawaiTool):
             description="The final answer to the problem",
         )
     ]
+    cacheable: bool = False
 
     @weave.op
     def forward(self, answer: Any) -> Any:
@@ -100,6 +101,7 @@ class UserInputTool(KawaiTool):
             description="The question to ask the user",
         )
     ]
+    cacheable: bool = False
 
     @weave.op
     def forward(self, question: str) -> str:

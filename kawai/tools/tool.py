@@ -59,6 +59,8 @@ class KawaiTool(BaseModel):
         description: Human-readable description of what the tool does. Shown to
             the agent to help it decide when to use this tool.
         parameters: List of KawaiToolParameter objects defining the tool's inputs.
+        cacheable: Whether the tool's output can be cached. Defaults to True.
+            Set to False for non-deterministic tools or tools with side effects.
 
     !!! example
         ```python
@@ -72,6 +74,7 @@ class KawaiTool(BaseModel):
                     tool_type="string"
                 )
             ]
+            cacheable: bool = True
 
             @weave.op
             def forward(self, expression: str) -> dict[str, Any]:
@@ -88,6 +91,7 @@ class KawaiTool(BaseModel):
     tool_name: str
     description: str
     parameters: list[KawaiToolParameter]
+    cacheable: bool = True
 
     def _get_parameter_schema(self, parameter: KawaiToolParameter) -> dict:
         """Generate JSON schema for a single parameter."""
